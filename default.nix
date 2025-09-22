@@ -3,9 +3,10 @@
 # Infered from not copying to store, this flake-compat does not care about
 # mimicing flakes perfectly, just "good enough".
 
-src:
+source:
 let
-  lockFilePath = src + "/flake.lock";
+  sourceString = builtins.toString source;
+  lockFilePath = sourceString + "/flake.lock";
 
   lockFile = builtins.fromJSON (builtins.readFile lockFilePath);
 
@@ -19,7 +20,7 @@ let
   rootSrc = {
     lastModified = 0;
     lastModifiedDate = 0;
-    outPath = src;
+    outPath = sourceString;
   };
 
   allNodes = builtins.mapAttrs (
