@@ -100,4 +100,5 @@ in
   };
 
   outputs = result;
+  impure = builtins.mapAttrs (n: v: v.${builtins.currentSystem} or v) result;
 }
