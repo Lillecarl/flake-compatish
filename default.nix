@@ -101,5 +101,6 @@ in
   };
 
   outputs = result;
+  # Try to get rid of redundant system attribute levels
   impure = builtins.mapAttrs (n: v: v.${builtins.currentSystem} or v) result;
 }

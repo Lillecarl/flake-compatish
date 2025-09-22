@@ -6,7 +6,7 @@ be able to build your things with flakes, or with flake-compatish and expect
 similar results (but not 100% equal).
 
 ## Non-goals
-Purity, cross compiling, being an exact clone of flakes.
+Pure evaluation, cross compiling, being an exact clone of flakes.
 
 ## Differences
 flake-compatish avoids copying things to store before evaluating, this is true
