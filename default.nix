@@ -23,6 +23,14 @@ let
     outPath = sourceString;
   };
 
+  callLocklessFlake =
+    flakeSrc:
+    let
+      flake = import (flakeSrc + "/flake.nix");
+      outputs = flakeSrc // (flake.outputs ({ self = outputs; }));
+    in
+    outputs;
+
   allNodes = builtins.mapAttrs (
     key: node:
     let
@@ -89,7 +97,9 @@ let
   ) lockFile.nodes;
 
   result =
-    if lockFile.version > 4 && lockFile.version <= 7 then
+    if !(builtins.pathExists lockFilePath) then
+      callLocklessFlake rootSrc
+    else if lockFile.version > 4 && lockFile.version <= 7 then
       allNodes.${lockFile.root}
     else
       throw "lock file '${lockFilePath}' has unsupported version ${toString lockFile.version}";
