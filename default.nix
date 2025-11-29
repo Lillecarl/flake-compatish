@@ -15,7 +15,7 @@ let
     let
       ft = builtins.fetchTree or (x: builtins.throw "flake-compatish requires builtins.fetchTree");
     in
-    if info.type != "path" then ft info else info.path;
+    ft info;
 
   rootSrc = {
     lastModified = 0;
@@ -27,7 +27,7 @@ let
     flakeSrc:
     let
       flake = import (flakeSrc + "/flake.nix");
-      outputs = flakeSrc // (flake.outputs ({ self = outputs; }));
+      outputs = flakeSrc // (flake.outputs { self = outputs; });
     in
     outputs;
 
@@ -37,6 +37,12 @@ let
       sourceInfo =
         if key == lockFile.root then
           rootSrc
+        else if node.original.type == "path" then
+          {
+            lastModified = 0;
+            lastModifiedDate = 0;
+            outPath = node.original.path;
+          }
         else
           fetchTree (node.info or { } // removeAttrs node.locked [ "dir" ]);
 
