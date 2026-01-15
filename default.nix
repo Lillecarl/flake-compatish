@@ -47,14 +47,19 @@ let
     outPath = builtins.toString path;
   };
 
-  # Resolve an override value to sourceInfo
+  # Resolve an override value to sourceInfo, or null if invalid
   # - path: use directly without store copy (fast local development)
   # - string: parse as flake reference and fetch (e.g., "github:owner/repo")
-  resolveOverride = override:
+  # Returns null (with warning) if path override doesn't exist
+  resolveOverride = name: override:
     if builtins.isString override then
       fetchTree (builtins.parseFlakeRef override)
+    else if builtins.pathExists override then
+      mkSourceInfo override
     else
-      mkSourceInfo override;
+      builtins.trace
+        "flake-compatish: override '${name}' path does not exist: ${toString override}, falling back to lockfile"
+        null;
 
   ###########################################################################
   # Lockfile parsing
@@ -99,13 +104,16 @@ let
       isRootNode = nodeName == lockFile.root;
 
       # Check for user-provided override (use "self" key for root node)
-      override = if isRootNode then overrides.self or null else overrides.${nodeName} or null;
+      overrideKey = if isRootNode then "self" else nodeName;
+      override = overrides.${overrideKey} or null;
+
+      # Resolve override (returns null if path doesn't exist)
+      resolvedOverride = if override != null then resolveOverride overrideKey override else null;
 
       # Fetch or construct the source for this node
       sourceInfo =
-        if override != null then
-          # User override: path (direct) or string (flake ref to fetch)
-          resolveOverride override
+        if resolvedOverride != null then
+          resolvedOverride
         else if isRootNode then
           # Root node: fetch from source path
           fetchTree {
@@ -170,9 +178,10 @@ let
   rootSourcePath =
     let
       override = overrides.self or null;
+      resolved = if override != null then resolveOverride "self" override else null;
     in
-    if override != null then
-      (resolveOverride override).outPath
+    if resolved != null then
+      resolved.outPath
     else
       (fetchTree {
         type = "path";

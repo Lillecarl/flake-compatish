@@ -158,6 +158,21 @@ let
       (result.outputs.simpleValue == "hello from simple")
       "Expected simpleValue to be 'hello from simple' with string override, got: ${result.outputs.simpleValue}";
 
+  # Test 12: Nonexistent path override for self falls back to fetchTree (with warning)
+  test_nonexistent_self_override_fallback =
+    let
+      result = flake-compatish {
+        source = ./fixtures/simple;
+        overrides = {
+          # This path doesn't exist - should warn and fall back to fetchTree
+          self = /nonexistent/path/that/does/not/exist;
+        };
+      };
+    in
+    assert' "nonexistent_self_override_fallback"
+      (isStorePath result.outputs.selfPath)
+      "Expected selfPath to be in /nix/store after fallback, got: ${result.outputs.selfPath}";
+
   # Collect all tests
   allTests = [
     test_default_copies_to_store
@@ -171,6 +186,7 @@ let
     test_flake_type
     test_string_override_fetches
     test_string_override_values
+    test_nonexistent_self_override_fallback
   ];
 
   # Run all tests - if any fail, the whole eval fails with a descriptive error
