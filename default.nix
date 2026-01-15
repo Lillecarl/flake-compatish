@@ -30,7 +30,12 @@ let
     flakeSrc:
     let
       flake = import (flakeSrc + "/flake.nix");
-      outputs = flakeSrc // (flake.outputs { self = outputs; });
+      sourceInfo = {
+        lastModified = 0;
+        lastModifiedDate = 0;
+        outPath = flakeSrc;
+      };
+      outputs = sourceInfo // (flake.outputs { self = outputs; });
     in
     outputs;
 

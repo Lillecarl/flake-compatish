@@ -1,0 +1,22 @@
+{
+  "nodes": {
+    "root": {
+      "inputs": {
+        "simple": "simple"
+      }
+    },
+    "simple": {
+      "locked": {
+        "lastModified": 0,
+        "path": "../simple",
+        "type": "path"
+      },
+      "original": {
+        "path": "../simple",
+        "type": "path"
+      }
+    }
+  },
+  "root": "root",
+  "version": 7
+}
