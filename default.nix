@@ -1,9 +1,18 @@
 # A Nix flakes-like implementation in Nix, assumes a modern Nix version with
-# fetchTree support. Will not copy src or path: type flake inputs into store.
-# Infered from not copying to store, this flake-compat does not care about
-# mimicing flakes perfectly, just "good enough".
+# fetchTree support. By default copies source into store for flake compatibility.
+# Use overrides = { self = ./.; } to use source path directly without store copy.
+#
+# Usage in default.nix:
+#   let
+#     lock = builtins.fromJSON (builtins.readFile ./flake.lock);
+#     flake-compatish = builtins.fetchTree lock.nodes.flake-compatish.locked;
+#   in
+#   import flake-compatish ./. # or: { source = ./.; overrides.self = ./.; }
 
-source:
+{
+  source,
+  overrides ? { },
+}:
 let
   sourceString = builtins.toString source;
   lockFilePath = sourceString + "/flake.lock";
@@ -17,12 +26,6 @@ let
     in
     ft info;
 
-  rootSrc = {
-    lastModified = 0;
-    lastModifiedDate = 0;
-    outPath = sourceString;
-  };
-
   callLocklessFlake =
     flakeSrc:
     let
@@ -34,15 +37,21 @@ let
   allNodes = builtins.mapAttrs (
     key: node:
     let
+      # Check if there's an override (use "self" for root node, otherwise node name)
+      override =
+        if key == lockFile.root then overrides.self or null
+        else overrides.${key} or null;
+
       sourceInfo =
-        if key == lockFile.root then
-          rootSrc
-        else if node.original.type == "path" then
+        if override != null then
+          # Use override path directly, bypassing lockfile/fetchTree
           {
             lastModified = 0;
             lastModifiedDate = 0;
-            outPath = node.original.path;
+            outPath = builtins.toString override;
           }
+        else if key == lockFile.root then
+          fetchTree { type = "path"; path = sourceString; }
         else
           fetchTree (node.info or { } // removeAttrs node.locked [ "dir" ]);
 
@@ -102,10 +111,16 @@ let
       sourceInfo
   ) lockFile.nodes;
 
+  rootSrc =
+    let override = overrides.self or null;
+    in
+    if override != null then builtins.toString override
+    else (fetchTree { type = "path"; path = sourceString; }).outPath;
+
   result =
     if !(builtins.pathExists lockFilePath) then
       callLocklessFlake rootSrc
-    else if lockFile.version > 4 && lockFile.version <= 7 then
+    else if lockFile.version >= 5 && lockFile.version <= 7 then
       allNodes.${lockFile.root}
     else
       throw "lock file '${lockFilePath}' has unsupported version ${toString lockFile.version}";
@@ -117,6 +132,6 @@ in
   };
 
   outputs = result;
-  # Try to get rid of redundant system attribute levels
+  # Try to get rid of redundant system attribute levels, this fails if you have packages named after builtins.currentSystem
   impure = builtins.mapAttrs (n: v: v.${builtins.currentSystem} or v) result;
 }
