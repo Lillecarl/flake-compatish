@@ -1,142 +1,195 @@
-# A Nix flakes-like implementation in Nix, assumes a modern Nix version with
-# fetchTree support. By default copies source into store for flake compatibility.
-# Use overrides = { self = ./.; } to use source path directly without store copy.
+# flake-compatish: Evaluate flakes without the flake evaluator
 #
-# Usage in default.nix:
-#   let
-#     lock = builtins.fromJSON (builtins.readFile ./flake.lock);
-#     flake-compatish = builtins.fetchTree lock.nodes.flake-compatish.locked;
-#   in
-#   import flake-compatish ./. # or: { source = ./.; overrides.self = ./.; }
+# A pure-Nix implementation that reads flake.nix and flake.lock to produce
+# flake outputs. Requires builtins.fetchTree (Nix 2.4+).
+#
+# Usage:
+#   # Minimal - copies source to store (flake-compatible purity)
+#   import flake-compatish ./.
+#
+#   # With overrides - use local paths directly (faster iteration)
+#   import flake-compatish {
+#     source = ./.;
+#     overrides = {
+#       self = ./.;           # Don't copy root flake to store
+#       nixpkgs = ~/nixpkgs;  # Use local nixpkgs checkout
+#     };
+#   }
 
 {
   source,
   overrides ? { },
 }:
+
 let
   sourceString = builtins.toString source;
   lockFilePath = sourceString + "/flake.lock";
 
-  lockFile = builtins.fromJSON (builtins.readFile lockFilePath);
+  ###########################################################################
+  # Helpers
+  ###########################################################################
 
+  # Wrapper for builtins.fetchTree with better error message
   fetchTree =
     info:
     let
-      ft = builtins.fetchTree or (x: builtins.throw "flake-compatish requires builtins.fetchTree");
+      ft =
+        builtins.fetchTree
+          or (throw "flake-compatish requires builtins.fetchTree (Nix 2.4+) with flakes enabled");
     in
     ft info;
 
-  callLocklessFlake =
-    flakeSrc:
-    let
-      flake = import (flakeSrc + "/flake.nix");
-      sourceInfo = {
-        lastModified = 0;
-        lastModifiedDate = 0;
-        outPath = flakeSrc;
-      };
-      outputs = sourceInfo // (flake.outputs { self = outputs; });
-    in
-    outputs;
+  # Create a fake sourceInfo for paths we don't want to copy to store
+  mkSourceInfo = path: {
+    lastModified = 0;
+    lastModifiedDate = 0;
+    outPath = builtins.toString path;
+  };
 
-  allNodes = builtins.mapAttrs (
-    key: node:
-    let
-      # Check if there's an override (use "self" for root node, otherwise node name)
-      override =
-        if key == lockFile.root then overrides.self or null
-        else overrides.${key} or null;
+  ###########################################################################
+  # Lockfile parsing
+  ###########################################################################
 
+  lockFile = builtins.fromJSON (builtins.readFile lockFilePath);
+
+  # Resolve an input spec to a node name.
+  # Input specs are either:
+  #   - A string: direct reference to a node (e.g., "nixpkgs")
+  #   - A list: "follows" path to traverse (e.g., ["dwarffs", "nixpkgs"])
+  resolveInputSpec =
+    inputSpec: if builtins.isList inputSpec then followPath lockFile.root inputSpec else inputSpec;
+
+  # Follow a "follows" path through the lockfile node graph.
+  # Example: followPath "root" ["dwarffs", "nixpkgs"]
+  #   1. Look up root's input "dwarffs" -> resolves to node "dwarffs"
+  #   2. Look up dwarffs's input "nixpkgs" -> resolves to final node
+  followPath =
+    nodeName: path:
+    if path == [ ] then
+      nodeName
+    else
+      let
+        nextInputSpec = lockFile.nodes.${nodeName}.inputs.${builtins.head path};
+        nextNodeName = resolveInputSpec nextInputSpec;
+      in
+      followPath nextNodeName (builtins.tail path);
+
+  ###########################################################################
+  # Node evaluation
+  ###########################################################################
+
+  # Evaluate all nodes in the lockfile into flake outputs.
+  # This is a lazy attrset - nodes are only evaluated when accessed.
+  evaluatedNodes = builtins.mapAttrs evaluateNode lockFile.nodes;
+
+  # Evaluate a single lockfile node into its flake outputs
+  evaluateNode =
+    nodeName: node:
+    let
+      isRootNode = nodeName == lockFile.root;
+
+      # Check for user-provided override (use "self" key for root node)
+      override = if isRootNode then overrides.self or null else overrides.${nodeName} or null;
+
+      # Fetch or construct the source for this node
       sourceInfo =
         if override != null then
-          # Use override path directly, bypassing lockfile/fetchTree
-          {
-            lastModified = 0;
-            lastModifiedDate = 0;
-            outPath = builtins.toString override;
+          # User override: use path directly without store copy
+          mkSourceInfo override
+        else if isRootNode then
+          # Root node: fetch from source path
+          fetchTree {
+            type = "path";
+            path = sourceString;
           }
-        else if key == lockFile.root then
-          fetchTree { type = "path"; path = sourceString; }
         else
+          # Dependency: fetch using lockfile info
           fetchTree (node.info or { } // removeAttrs node.locked [ "dir" ]);
 
-      subdir = if key == lockFile.root then "" else node.locked.dir or "";
+      # Handle flakes in subdirectories (e.g., "dir" attribute in lockfile)
+      subdir = if isRootNode then "" else node.locked.dir or "";
+      flakePath = if subdir == "" then sourceInfo.outPath else "${sourceInfo.outPath}/${subdir}";
 
-      outPath = sourceInfo + ((if subdir == "" then "" else "/") + subdir);
+      # Import and evaluate the flake
+      flake = import (flakePath + "/flake.nix");
 
-      flake = import (outPath + "/flake.nix");
+      # Recursively resolve this node's inputs to evaluated flakes
+      resolvedInputs = builtins.mapAttrs (
+        inputName: inputSpec: evaluatedNodes.${resolveInputSpec inputSpec}
+      ) (node.inputs or { });
 
-      inputs = builtins.mapAttrs (inputName: inputSpec: allNodes.${resolveInput inputSpec}) (
-        node.inputs or { }
-      );
+      # Call flake.outputs with resolved inputs + self reference
+      flakeOutputs = flake.outputs (resolvedInputs // { self = flakeResult; });
 
-      # Resolve a input spec into a node name. An input spec is
-      # either a node name, or a 'follows' path from the root
-      # node.
-      resolveInput =
-        inputSpec: if builtins.isList inputSpec then getInputByPath lockFile.root inputSpec else inputSpec;
-
-      # Follow an input path (e.g. ["dwarffs" "nixpkgs"]) from the
-      # root node, returning the final node.
-      getInputByPath =
-        nodeName: path:
-        if path == [ ] then
-          nodeName
-        else
-          getInputByPath
-            # Since this could be a 'follows' input, call resolveInput.
-            (resolveInput lockFile.nodes.${nodeName}.inputs.${builtins.head path})
-            (builtins.tail path);
-
-      outputs = flake.outputs (inputs // { self = result; });
-
-      result =
-        outputs
-        # We add the sourceInfo attribute for its metadata, as they are
-        # relevant metadata for the flake. However, the outPath of the
-        # sourceInfo does not necessarily match the outPath of the flake,
-        # as the flake may be in a subdirectory of a source.
-        # This is shadowed in the next //
+      # Construct the final flake result with standard attributes
+      flakeResult =
+        flakeOutputs
         // sourceInfo
         // {
-          # This shadows the sourceInfo.outPath
-          inherit outPath;
-
-          inherit inputs;
-          inherit outputs;
+          outPath = flakePath; # May differ from sourceInfo.outPath if subdir
+          inputs = resolvedInputs;
+          outputs = flakeOutputs;
           inherit sourceInfo;
           _type = "flake";
         };
 
     in
+    # node.flake defaults to true; if false, this is a non-flake source
     if node.flake or true then
       assert builtins.isFunction flake.outputs;
-      result
+      flakeResult
     else
-      sourceInfo
-  ) lockFile.nodes;
+      sourceInfo;
 
-  rootSrc =
-    let override = overrides.self or null;
+  ###########################################################################
+  # Lockless flake support
+  ###########################################################################
+
+  # For flakes without a lockfile (no dependencies)
+  evaluateLocklessFlake =
+    flakeSrc:
+    let
+      flake = import (flakeSrc + "/flake.nix");
+      sourceInfo = mkSourceInfo flakeSrc;
+      flakeOutputs = flake.outputs { self = flakeResult; };
+      flakeResult = flakeOutputs // sourceInfo;
     in
-    if override != null then builtins.toString override
-    else (fetchTree { type = "path"; path = sourceString; }).outPath;
+    flakeResult;
 
-  result =
-    if !(builtins.pathExists lockFilePath) then
-      callLocklessFlake rootSrc
-    else if lockFile.version >= 5 && lockFile.version <= 7 then
-      allNodes.${lockFile.root}
+  # Determine root source path (respects overrides.self)
+  rootSourcePath =
+    let
+      override = overrides.self or null;
+    in
+    if override != null then
+      builtins.toString override
     else
-      throw "lock file '${lockFilePath}' has unsupported version ${toString lockFile.version}";
+      (fetchTree {
+        type = "path";
+        path = sourceString;
+      }).outPath;
+
+  ###########################################################################
+  # Main entry point
+  ###########################################################################
+
+  rootFlake =
+    if !(builtins.pathExists lockFilePath) then
+      evaluateLocklessFlake rootSourcePath
+    else if lockFile.version >= 5 && lockFile.version <= 7 then
+      evaluatedNodes.${lockFile.root}
+    else
+      throw "Unsupported flake.lock version ${toString lockFile.version} (supported: 5-7)";
 
 in
 {
-  inputs = result.inputs or { } // {
-    self = result;
+  # Standard flake-compat interface
+  inputs = (rootFlake.inputs or { }) // {
+    self = rootFlake;
   };
+  outputs = rootFlake;
 
-  outputs = result;
-  # Try to get rid of redundant system attribute levels, this fails if you have packages named after builtins.currentSystem
-  impure = builtins.mapAttrs (n: v: v.${builtins.currentSystem} or v) result;
+  # Convenience: auto-select current system from outputs
+  # e.g., impure.packages.hello instead of outputs.packages.x86_64-linux.hello
+  impure = builtins.mapAttrs (name: value: value.${builtins.currentSystem} or value) rootFlake;
 }
