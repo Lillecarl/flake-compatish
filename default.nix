@@ -17,12 +17,18 @@
 #     };
 #   }
 
-{
-  source,
-  overrides ? { },
-}:
+# Accept both old style (just path) and new style (attrset with source/overrides)
+args:
 
 let
+  # Normalize arguments: support both `flake-compatish ./.` and `flake-compatish { source = ./.; }`
+  normalizedArgs =
+    if builtins.isAttrs args then args
+    else { source = args; };
+
+  source = normalizedArgs.source;
+  overrides = normalizedArgs.overrides or { };
+
   sourceString = builtins.toString source;
   lockFilePath = sourceString + "/flake.lock";
 
