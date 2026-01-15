@@ -7,12 +7,13 @@
 #   # Minimal - copies source to store (flake-compatible purity)
 #   import flake-compatish ./.
 #
-#   # With overrides - use local paths directly (faster iteration)
+#   # With overrides - use local paths or flake refs
 #   import flake-compatish {
 #     source = ./.;
 #     overrides = {
-#       self = ./.;           # Don't copy root flake to store
-#       nixpkgs = ~/nixpkgs;  # Use local nixpkgs checkout
+#       self = ./.;                                  # path: use directly, no store copy
+#       nixpkgs = ~/Code/nixpkgs;                    # path: local checkout
+#       nixpkgs = "github:nixos/nixpkgs/master";    # string: parsed as flake ref
 #     };
 #   }
 
@@ -45,6 +46,15 @@ let
     lastModifiedDate = 0;
     outPath = builtins.toString path;
   };
+
+  # Resolve an override value to sourceInfo
+  # - path: use directly without store copy (fast local development)
+  # - string: parse as flake reference and fetch (e.g., "github:owner/repo")
+  resolveOverride = override:
+    if builtins.isString override then
+      fetchTree (builtins.parseFlakeRef override)
+    else
+      mkSourceInfo override;
 
   ###########################################################################
   # Lockfile parsing
@@ -94,8 +104,8 @@ let
       # Fetch or construct the source for this node
       sourceInfo =
         if override != null then
-          # User override: use path directly without store copy
-          mkSourceInfo override
+          # User override: path (direct) or string (flake ref to fetch)
+          resolveOverride override
         else if isRootNode then
           # Root node: fetch from source path
           fetchTree {
@@ -162,7 +172,7 @@ let
       override = overrides.self or null;
     in
     if override != null then
-      builtins.toString override
+      (resolveOverride override).outPath
     else
       (fetchTree {
         type = "path";

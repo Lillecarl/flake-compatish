@@ -127,6 +127,37 @@ let
       (result.outputs._type == "flake")
       "Expected _type to be 'flake', got: ${result.outputs._type}";
 
+  # Test 10: String override (flake ref) is fetched to store
+  test_string_override_fetches =
+    let
+      result = flake-compatish {
+        source = ./fixtures/with-dep;
+        overrides = {
+          self = ./fixtures/with-dep;
+          # Use path: flake ref as string - should be fetched to store
+          simple = "path:${fixturesPath}/simple";
+        };
+      };
+    in
+    assert' "string_override_fetches"
+      (isStorePath result.outputs.simplePath)
+      "Expected simplePath to be in /nix/store when using string flake ref, got: ${result.outputs.simplePath}";
+
+  # Test 11: String override still resolves values correctly
+  test_string_override_values =
+    let
+      result = flake-compatish {
+        source = ./fixtures/with-dep;
+        overrides = {
+          self = ./fixtures/with-dep;
+          simple = "path:${fixturesPath}/simple";
+        };
+      };
+    in
+    assert' "string_override_values"
+      (result.outputs.simpleValue == "hello from simple")
+      "Expected simpleValue to be 'hello from simple' with string override, got: ${result.outputs.simpleValue}";
+
   # Collect all tests
   allTests = [
     test_default_copies_to_store
@@ -138,6 +169,8 @@ let
     test_lockless_default
     test_inputs_has_self
     test_flake_type
+    test_string_override_fetches
+    test_string_override_values
   ];
 
   # Run all tests - if any fail, the whole eval fails with a descriptive error
