@@ -1,31 +1,56 @@
-# flake-compat
+# flake-compatish
 
-## Goals
-Be able to consume modern flakes without hating your life. This means you should
-be able to build your things with flakes, or with flake-compatish and expect
-similar results (but not 100% equal).
+Evaluate flakes without the flake evaluator. Requires Nix 2.4+ with `builtins.fetchTree`.
 
-## Non-goals
-Pure evaluation, cross compiling, being an exact clone of flakes.
+## Why
 
-## Differences
-flake-compatish avoids copying things to store before evaluating, this is true
-for src as well as path: type flake inputs. For path: we just fake as little as
-possible to make evaluation work, this is useful when hacking on a big dependency
-like nixpkgs. Don't commit your lockfile when doing this unless you're a master
-hacker.
+Flakes copy your source to the Nix store before evaluation. For large projects or when hacking on dependencies like nixpkgs, this creates painful iteration cycles.
+
+flake-compatish lets you:
+- **Keep flake.nix for CI/others** - maintain full flake compatibility
+- **Skip the store copy locally** - evaluate directly from your working directory
+- **Override inputs on the fly** - point dependencies at local checkouts without touching flake.lock
 
 ## Usage
 
-default.nix
+Add flake-compatish as a flake input, then create a `default.nix`:
+
 ```nix
 let
-  fc = import (builtins.fetchTree {
-    type = "git";
-    url = "https://github.com/lillecarl/flake-compatish.git";
-  });
+  lock = builtins.fromJSON (builtins.readFile ./flake.lock);
+  flake-compatish = builtins.fetchTree lock.nodes.flake-compatish.locked;
 in
-fc ./.
-# outputs.packages.x86_64-linux.hello = derivation
-# impure.packages.hello = derivation
+import flake-compatish ./.
+```
+
+### With overrides
+
+```nix
+import flake-compatish {
+  source = ./.;
+  overrides = {
+    # Path: use directly without store copy (fast local dev)
+    self = ./.;
+    nixpkgs = ~/Code/nixpkgs;
+
+    # String: parsed as flake ref and fetched
+    nixpkgs = "github:nixos/nixpkgs/nixos-unstable";
+  };
+}
+```
+
+### Output structure
+
+```nix
+{
+  inputs = { self, nixpkgs, ... };  # resolved inputs
+  outputs = { packages, ... };      # flake outputs
+  impure = { packages, ... };       # outputs with current system auto-selected
+}
+```
+
+## Running tests
+
+```bash
+nix eval --impure --file ./test
 ```
