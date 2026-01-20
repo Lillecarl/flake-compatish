@@ -83,15 +83,14 @@ let
   # - path: use directly without store copy (fast local development)
   # - string: parse as flake reference and fetch (e.g., "github:owner/repo")
   # Returns null (with warning) if path override doesn't exist
-  resolveOverride = name: override:
+  resolveOverride =
+    name: override:
     if builtins.isString override then
       fetchTree (parseFlakeRef override)
     else if builtins.pathExists override then
       mkSourceInfo override
     else
-      builtins.trace
-        "flake-compatish: override '${name}' path does not exist: ${toString override}, falling back to lockfile"
-        null;
+      builtins.trace "flake-compatish: override '${name}' path does not exist: ${toString override}, falling back to lockfile" null;
 
   ###########################################################################
   # Lockfile parsing

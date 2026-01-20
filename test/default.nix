@@ -7,9 +7,9 @@ let
   isStorePath = path: builtins.substring 0 11 (builtins.toString path) == "/nix/store/";
 
   # Helper to run assertion with descriptive error
-  assert' = name: condition: message:
-    if condition then true
-    else builtins.throw "FAILED: ${name} - ${message}";
+  assert' =
+    name: condition: message:
+    if condition then true else builtins.throw "FAILED: ${name} - ${message}";
 
   # Get absolute path for fixtures
   fixturesPath = builtins.toString ./fixtures;
@@ -23,8 +23,7 @@ let
     let
       result = flake-compatish { source = ./fixtures/simple; };
     in
-    assert' "default_copies_to_store"
-      (isStorePath result.outputs.selfPath)
+    assert' "default_copies_to_store" (isStorePath result.outputs.selfPath)
       "Expected selfPath to be in /nix/store, got: ${result.outputs.selfPath}";
 
   # Test 2: overrides.self - source should NOT be copied to store
@@ -35,9 +34,9 @@ let
         overrides.self = ./fixtures/simple;
       };
     in
-    assert' "override_self_no_store"
-      (!(isStorePath result.outputs.selfPath))
-      "Expected selfPath to NOT be in /nix/store, got: ${result.outputs.selfPath}";
+    assert' "override_self_no_store" (
+      !(isStorePath result.outputs.selfPath)
+    ) "Expected selfPath to NOT be in /nix/store, got: ${result.outputs.selfPath}";
 
   # Test 3: Outputs are correctly resolved
   test_outputs_resolved =
@@ -47,9 +46,9 @@ let
         overrides.self = ./fixtures/simple;
       };
     in
-    assert' "outputs_resolved"
-      (result.outputs.testValue == "hello from simple")
-      "Expected testValue to be 'hello from simple', got: ${result.outputs.testValue}";
+    assert' "outputs_resolved" (
+      result.outputs.testValue == "hello from simple"
+    ) "Expected testValue to be 'hello from simple', got: ${result.outputs.testValue}";
 
   # Test 4: Input override works
   test_input_override =
@@ -63,9 +62,9 @@ let
         };
       };
     in
-    assert' "input_override"
-      (result.outputs.simplePath == overridePath)
-      "Expected simplePath to be '${overridePath}', got: ${result.outputs.simplePath}";
+    assert' "input_override" (
+      result.outputs.simplePath == overridePath
+    ) "Expected simplePath to be '${overridePath}', got: ${result.outputs.simplePath}";
 
   # Test 5: Dependency values are accessible
   test_dependency_values =
@@ -78,9 +77,9 @@ let
         };
       };
     in
-    assert' "dependency_values"
-      (result.outputs.simpleValue == "hello from simple")
-      "Expected simpleValue to be 'hello from simple', got: ${result.outputs.simpleValue}";
+    assert' "dependency_values" (
+      result.outputs.simpleValue == "hello from simple"
+    ) "Expected simpleValue to be 'hello from simple', got: ${result.outputs.simpleValue}";
 
   # Test 6: Lockless flake works with override
   test_lockless_with_override =
@@ -90,17 +89,16 @@ let
         overrides.self = ./fixtures/lockless;
       };
     in
-    assert' "lockless_with_override"
-      (result.outputs.testValue == "hello from lockless")
-      "Expected testValue to be 'hello from lockless', got: ${result.outputs.testValue}";
+    assert' "lockless_with_override" (
+      result.outputs.testValue == "hello from lockless"
+    ) "Expected testValue to be 'hello from lockless', got: ${result.outputs.testValue}";
 
   # Test 7: Lockless flake works with default (store copy)
   test_lockless_default =
     let
       result = flake-compatish { source = ./fixtures/lockless; };
     in
-    assert' "lockless_default"
-      (isStorePath result.outputs.selfPath)
+    assert' "lockless_default" (isStorePath result.outputs.selfPath)
       "Expected selfPath to be in /nix/store for lockless default, got: ${result.outputs.selfPath}";
 
   # Test 8: inputs attrset contains self
@@ -111,9 +109,7 @@ let
         overrides.self = ./fixtures/simple;
       };
     in
-    assert' "inputs_has_self"
-      (result.inputs ? self)
-      "Expected inputs to contain 'self' attribute";
+    assert' "inputs_has_self" (result.inputs ? self) "Expected inputs to contain 'self' attribute";
 
   # Test 9: _type is "flake"
   test_flake_type =
@@ -123,9 +119,9 @@ let
         overrides.self = ./fixtures/simple;
       };
     in
-    assert' "flake_type"
-      (result.outputs._type == "flake")
-      "Expected _type to be 'flake', got: ${result.outputs._type}";
+    assert' "flake_type" (
+      result.outputs._type == "flake"
+    ) "Expected _type to be 'flake', got: ${result.outputs._type}";
 
   # Test 10: String override (flake ref) is fetched to store
   test_string_override_fetches =
@@ -139,8 +135,7 @@ let
         };
       };
     in
-    assert' "string_override_fetches"
-      (isStorePath result.outputs.simplePath)
+    assert' "string_override_fetches" (isStorePath result.outputs.simplePath)
       "Expected simplePath to be in /nix/store when using string flake ref, got: ${result.outputs.simplePath}";
 
   # Test 11: String override still resolves values correctly
@@ -154,8 +149,7 @@ let
         };
       };
     in
-    assert' "string_override_values"
-      (result.outputs.simpleValue == "hello from simple")
+    assert' "string_override_values" (result.outputs.simpleValue == "hello from simple")
       "Expected simpleValue to be 'hello from simple' with string override, got: ${result.outputs.simpleValue}";
 
   # Test 12: Nonexistent path override for self falls back to fetchTree (with warning)
@@ -169,8 +163,7 @@ let
         };
       };
     in
-    assert' "nonexistent_self_override_fallback"
-      (isStorePath result.outputs.selfPath)
+    assert' "nonexistent_self_override_fallback" (isStorePath result.outputs.selfPath)
       "Expected selfPath to be in /nix/store after fallback, got: ${result.outputs.selfPath}";
 
   # Collect all tests
