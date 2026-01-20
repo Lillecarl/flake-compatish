@@ -23,10 +23,27 @@ args:
 let
   # Normalize arguments: support both `flake-compatish ./.` and `flake-compatish { source = ./.; }`
   normalizedArgs =
-    if builtins.isAttrs args then args
-    else { source = args; };
+    if builtins.isAttrs args then
+      args
+    else
+      {
+        source = args;
+        overrides = {
+          self = args;
+        };
+      };
 
-  source = normalizedArgs.source;
+  source =
+    let
+      srcArg = normalizedArgs.source;
+    in
+    if builtins.isString srcArg then
+      fetchTree (parseFlakeRef srcArg)
+    else if builtins.pathExists srcArg then
+      srcArg
+    else
+      builtins.throw "source must be a path that exists or a flakeRef";
+
   overrides = normalizedArgs.overrides or { };
 
   sourceString = builtins.toString source;
