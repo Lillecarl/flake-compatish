@@ -46,6 +46,15 @@ let
     in
     ft info;
 
+  parseFlakeRef =
+    info:
+    let
+      prf =
+        builtins.parseFlakeRef
+          or (throw "flake-compatish requires builtins.parseFlakeRef (Nix 2.4+) with flakes enabled");
+    in
+    prf info;
+
   # Create a fake sourceInfo for paths we don't want to copy to store
   mkSourceInfo = path: {
     lastModified = 0;
@@ -59,7 +68,7 @@ let
   # Returns null (with warning) if path override doesn't exist
   resolveOverride = name: override:
     if builtins.isString override then
-      fetchTree (builtins.parseFlakeRef override)
+      fetchTree (parseFlakeRef override)
     else if builtins.pathExists override then
       mkSourceInfo override
     else
