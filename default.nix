@@ -75,7 +75,7 @@ let
   # Create a fake sourceInfo for paths we don't want to copy to store
   mkSourceInfo = path: {
     lastModified = 0;
-    lastModifiedDate = 0;
+    lastModifiedDate = "19700101000000";
     outPath = builtins.toString path;
   };
 
