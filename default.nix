@@ -13,7 +13,7 @@
 #     overrides = {
 #       self = ./.;                                  # path: use directly, no store copy
 #       nixpkgs = ~/Code/nixpkgs;                    # path: local checkout
-#       nixpkgs = "github:nixos/nixpkgs/master";    # string: parsed as flake ref
+#       nixpkgs = "github:nixos/nixpkgs/master";     # string: parsed as flake ref
 #     };
 #   }
 
@@ -38,15 +38,16 @@ let
       srcArg = normalizedArgs.source;
     in
     if builtins.isString srcArg then
-      fetchTree (parseFlakeRef srcArg)
+      fcFetchTree (fcParseFlakeRef srcArg)
     else if builtins.pathExists srcArg then
       srcArg
     else
-      builtins.throw "source must be a path that exists or a flakeRef";
+      throw "source must be a path that exists or a flakeRef";
 
   suppliedOverrides = normalizedArgs.overrides or { };
+  warnOverrides = normalizedArgs.warnOverrides or true;
 
-  sourceString = builtins.toString source;
+  sourceString = toString source;
   lockFilePath = sourceString + "/flake.lock";
   overridesFile = normalizedArgs.overridesFile or (sourceString + "/overrides.nix");
 
@@ -55,21 +56,25 @@ let
   ###########################################################################
 
   # Wrapper for builtins.fetchTree with better error message
-  fetchTree =
+  fcFetchTree =
     info:
     let
       ft =
-        builtins.fetchTree
-          or (throw "flake-compatish requires builtins.fetchTree (Nix 2.4+) with flakes enabled");
+        if builtins.hasAttr "fetchTree" builtins then
+          builtins.getAttr "fetchTree" builtins
+        else
+          throw "flake-compatish requires builtins.fetchTree (Nix 2.4+) with flakes enabled";
     in
     ft info;
 
-  parseFlakeRef =
+  fcParseFlakeRef =
     info:
     let
       prf =
-        builtins.parseFlakeRef
-          or (throw "flake-compatish requires builtins.parseFlakeRef (Nix 2.4+) with flakes enabled");
+        if builtins.hasAttr "parseFlakeRef" builtins then
+          builtins.getAttr "parseFlakeRef" builtins
+        else
+          throw "flake-compatish requires builtins.parseFlakeRef (Nix 2.4+) with flakes enabled";
     in
     prf info;
 
@@ -77,7 +82,7 @@ let
   mkSourceInfo = path: {
     lastModified = 0;
     lastModifiedDate = "19700101000000";
-    outPath = builtins.toString path;
+    outPath = toString path;
   };
 
   # Resolve an override value to sourceInfo, or null if invalid.
@@ -103,7 +108,7 @@ let
     if pathIsUsable.success && pathIsUsable.value then
       mkSourceInfo forcedOverride.value
     else if forcedOverride.success && builtins.isString forcedOverride.value then
-      fetchTree (parseFlakeRef forcedOverride.value)
+      fcFetchTree (fcParseFlakeRef forcedOverride.value)
     else
       null;
 
@@ -147,6 +152,13 @@ let
   # A local value wins when valid. If it cannot be used (for example because a
   # development path is unavailable in pure evaluation), try the explicit
   # override before falling back to the lockfile.
+  traceAppliedOverride =
+    name: sourceInfo:
+    if warnOverrides then
+      builtins.warn "flake-compatish: overriding ${name} to ${sourceInfo.outPath}" sourceInfo
+    else
+      sourceInfo;
+
   resolveNamedOverride =
     name:
     let
@@ -155,9 +167,12 @@ let
       suppliedOverride = getOverride suppliedOverrides name;
     in
     if resolvedLocal != null then
-      resolvedLocal
+      traceAppliedOverride name resolvedLocal
     else if suppliedOverride != null then
-      resolveOverride name suppliedOverride
+      let
+        resolvedSupplied = resolveOverride name suppliedOverride;
+      in
+      if resolvedSupplied != null then traceAppliedOverride name resolvedSupplied else null
     else
       null;
 
@@ -208,13 +223,13 @@ let
           resolvedOverride
         else if isRootNode then
           # Root node: fetch from source path
-          fetchTree {
+          fcFetchTree {
             type = "path";
             path = sourceString;
           }
         else
           # Dependency: fetch using lockfile info
-          fetchTree (node.info or { } // removeAttrs node.locked [ "dir" ]);
+          fcFetchTree (node.info or { } // removeAttrs node.locked [ "dir" ]);
 
       # Handle flakes in subdirectories (e.g., "dir" attribute in lockfile)
       subdir = if isRootNode then "" else node.locked.dir or "";
@@ -274,7 +289,7 @@ let
     if resolved != null then
       resolved.outPath
     else
-      (fetchTree {
+      (fcFetchTree {
         type = "path";
         path = sourceString;
       }).outPath;

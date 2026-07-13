@@ -55,7 +55,8 @@ flake-compatish finds this file relative to the supplied `source`. Pass
 file. It is applied in impure evaluation when available; pure flake evaluation
 silently ignores it. Only `self` and inputs declared by the consumer's
 lockfile are considered. Missing or unavailable path overrides fall back to
-the lockfile.
+the lockfile. Applied overrides emit evaluation warnings by default; pass
+`warnOverrides = false;` to suppress them.
 
 ### Output structure
 

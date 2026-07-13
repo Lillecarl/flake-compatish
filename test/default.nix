@@ -209,6 +209,19 @@ let
       result.outputs.simplePath == "${fixturesPath}/simple"
     ) "Expected the configured local override file to take precedence";
 
+  # Test 16: Override warnings can be disabled without changing resolution.
+  test_warn_overrides_disabled =
+    let
+      result = flake-compatish {
+        source = ./fixtures/simple;
+        overrides.self = ./fixtures/simple;
+        warnOverrides = false;
+      };
+    in
+    assert' "warn_overrides_disabled" (
+      result.outputs.testValue == "hello from simple"
+    ) "Expected overrides to resolve when warnings are disabled";
+
   # Collect all tests
   allTests = [
     test_default_copies_to_store
@@ -226,6 +239,7 @@ let
     test_no_local_override_file
     test_unknown_override_is_lazy
     test_configured_overrides_file
+    test_warn_overrides_disabled
   ];
 
   # Run all tests - if any fail, the whole eval fails with a descriptive error
