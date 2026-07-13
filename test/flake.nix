@@ -7,5 +7,27 @@
       inputs.nixpkgs.follows = "nixpkgs";
     };
   };
-  outputs = _: { };
+  outputs = { flake-compatish, ... }: {
+    # overrides.nix is gitignored in this fixture.  A pure flake evaluation
+    # therefore sees the copied fixture without that local file.
+    pureLocalOverride =
+      let
+        result = import flake-compatish {
+          source = ./fixtures/with-dep;
+          overrides = {
+            self = ./fixtures/with-dep;
+            simple = ./fixtures/simple;
+          };
+          overridesFile = ./fixtures/with-dep/custom-overrides.nix;
+        };
+      in
+      if
+        result.outputs.simpleValue == "hello from simple"
+        && builtins.substring 0 11 result.outputs.simplePath == "/nix/store/"
+      then
+        "pure local overrides ignored"
+      else
+        throw "local override was unexpectedly applied during pure evaluation";
+
+  };
 }

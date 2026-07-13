@@ -2,3 +2,4 @@
 .pre-commit-config.yaml
 # No pycache
 __pycache__
+test/fixtures/with-dep/overrides.nix

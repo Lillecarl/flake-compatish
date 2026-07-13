@@ -44,10 +44,11 @@ let
     else
       builtins.throw "source must be a path that exists or a flakeRef";
 
-  overrides = normalizedArgs.overrides or { };
+  suppliedOverrides = normalizedArgs.overrides or { };
 
   sourceString = builtins.toString source;
   lockFilePath = sourceString + "/flake.lock";
+  overridesFile = normalizedArgs.overridesFile or (sourceString + "/overrides.nix");
 
   ###########################################################################
   # Helpers
@@ -79,24 +80,86 @@ let
     outPath = builtins.toString path;
   };
 
-  # Resolve an override value to sourceInfo, or null if invalid
+  # Resolve an override value to sourceInfo, or null if invalid.
   # - path: use directly without store copy (fast local development)
   # - string: parse as flake reference and fetch (e.g., "github:owner/repo")
-  # Returns null (with warning) if path override doesn't exist
+  #
+  # `tryEval` does not make a missing file safe to import, so callers must
+  # guard imports with `pathExists` first.  This check only forces the
+  # candidate selected by its declared input name.
   resolveOverride =
     name: override:
-    if builtins.isString override then
-      fetchTree (parseFlakeRef override)
-    else if builtins.pathExists override then
-      mkSourceInfo override
+    let
+      forcedOverride = builtins.tryEval override;
+      pathIsUsable =
+        if forcedOverride.success then
+          builtins.tryEval (builtins.isPath forcedOverride.value && builtins.pathExists forcedOverride.value)
+        else
+          {
+            success = false;
+            value = false;
+          };
+    in
+    if pathIsUsable.success && pathIsUsable.value then
+      mkSourceInfo forcedOverride.value
+    else if forcedOverride.success && builtins.isString forcedOverride.value then
+      fetchTree (parseFlakeRef forcedOverride.value)
     else
-      builtins.trace "flake-compatish: override '${name}' path does not exist: ${toString override}, falling back to lockfile" null;
+      null;
+
+  # `pathExists` must run before `import`; wrapping an import in `tryEval` does
+  # not reliably turn a missing-file error into a value.  The extra `tryEval`
+  # converts ordinary evaluation failures from a configurable path expression
+  # into an absent optional file.
+  optionalOverridesFileExists =
+    path:
+    let
+      checked = builtins.tryEval (builtins.pathExists path);
+    in
+    checked.success && checked.value;
 
   ###########################################################################
   # Lockfile parsing
   ###########################################################################
 
   lockFile = builtins.fromJSON (builtins.readFile lockFilePath);
+
+  # This file belongs to the consumer and is normally gitignored.  By default
+  # it is looked up relative to `source`, never relative to flake-compatish;
+  # callers can select a different file with `overridesFile`.  `getEnv` is
+  # empty in pure Nix evaluation, so the local file is never imported there
+  # even when a dirty flake source happened to copy it into the store.
+  isImpureEvaluation = builtins.getEnv "HOME" != "" || builtins.getEnv "USER" != "";
+  localOverrides =
+    if isImpureEvaluation && optionalOverridesFileExists overridesFile then
+      import overridesFile
+    else
+      { };
+
+  # Do not select an override value until its name is known to be valid. This
+  # ignores typoed names and preserves laziness for arbitrary extra attrs.
+  rootInputNames = builtins.attrNames (lockFile.nodes.${lockFile.root}.inputs or { });
+  isDeclaredOverrideName = name: name == "self" || builtins.elem name rootInputNames;
+  getOverride =
+    overrides: name:
+    if isDeclaredOverrideName name && builtins.hasAttr name overrides then overrides.${name} else null;
+
+  # A local value wins when valid. If it cannot be used (for example because a
+  # development path is unavailable in pure evaluation), try the explicit
+  # override before falling back to the lockfile.
+  resolveNamedOverride =
+    name:
+    let
+      localOverride = getOverride localOverrides name;
+      resolvedLocal = if localOverride != null then resolveOverride name localOverride else null;
+      suppliedOverride = getOverride suppliedOverrides name;
+    in
+    if resolvedLocal != null then
+      resolvedLocal
+    else if suppliedOverride != null then
+      resolveOverride name suppliedOverride
+    else
+      null;
 
   # Resolve an input spec to a node name.
   # Input specs are either:
@@ -136,10 +199,8 @@ let
 
       # Check for user-provided override (use "self" key for root node)
       overrideKey = if isRootNode then "self" else nodeName;
-      override = overrides.${overrideKey} or null;
-
       # Resolve override (returns null if path doesn't exist)
-      resolvedOverride = if override != null then resolveOverride overrideKey override else null;
+      resolvedOverride = resolveNamedOverride overrideKey;
 
       # Fetch or construct the source for this node
       sourceInfo =
@@ -208,8 +269,7 @@ let
   # Determine root source path (respects overrides.self)
   rootSourcePath =
     let
-      override = overrides.self or null;
-      resolved = if override != null then resolveOverride "self" override else null;
+      resolved = resolveNamedOverride "self";
     in
     if resolved != null then
       resolved.outPath

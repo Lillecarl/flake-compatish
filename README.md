@@ -39,6 +39,24 @@ import flake-compatish {
 }
 ```
 
+### Local overrides
+
+For machine-local development checkouts, put an `overrides.nix` file next to
+the consuming flake's `flake.nix` and add it to that repository's `.gitignore`:
+
+```nix
+{
+  nixpkgs = ~/Code/nixpkgs;
+}
+```
+
+flake-compatish finds this file relative to the supplied `source`. Pass
+`overridesFile = /path/to/another-overrides.nix;` to use a different optional
+file. It is applied in impure evaluation when available; pure flake evaluation
+silently ignores it. Only `self` and inputs declared by the consumer's
+lockfile are considered. Missing or unavailable path overrides fall back to
+the lockfile.
+
 ### Output structure
 
 ```nix
@@ -52,5 +70,5 @@ import flake-compatish {
 ## Running tests
 
 ```bash
-nix eval --impure --file ./test
+./test/integration.sh
 ```

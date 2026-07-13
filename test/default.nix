@@ -166,6 +166,49 @@ let
     assert' "nonexistent_self_override_fallback" (isStorePath result.outputs.selfPath)
       "Expected selfPath to be in /nix/store after fallback, got: ${result.outputs.selfPath}";
 
+  # Test 13: A consumer without overrides.nix proceeds normally.
+  test_no_local_override_file =
+    let
+      result = flake-compatish {
+        source = ./fixtures/simple;
+        overrides.self = ./fixtures/simple;
+      };
+    in
+    assert' "no_local_override_file" (
+      result.outputs.testValue == "hello from simple"
+    ) "Expected a consumer without overrides.nix to evaluate normally";
+
+  # Test 14: Unknown keys must not be forced at all.
+  test_unknown_override_is_lazy =
+    let
+      result = flake-compatish {
+        source = ./fixtures/simple;
+        overrides = {
+          self = ./fixtures/simple;
+          not-an-input = throw "unknown override was forced";
+        };
+      };
+    in
+    assert' "unknown_override_is_lazy" (
+      result.outputs.testValue == "hello from simple"
+    ) "Expected unknown override keys to be ignored without forcing their values";
+
+  # Test 15: The optional local override file can be configured explicitly.
+  test_configured_overrides_file =
+    let
+      result = flake-compatish {
+        source = ./fixtures/with-dep;
+        overrides = {
+          self = ./fixtures/with-dep;
+          simple = "path:${fixturesPath}/simple";
+        };
+        overridesFile = ./fixtures/with-dep/custom-overrides.nix;
+      };
+    in
+    assert' "configured_overrides_file" (
+      result.outputs.simplePath == "${fixturesPath}/simple"
+    ) "Expected the configured local override file to take precedence";
+
   # Collect all tests
   allTests = [
     test_default_copies_to_store
@@ -180,6 +223,9 @@ let
     test_string_override_fetches
     test_string_override_values
     test_nonexistent_self_override_fallback
+    test_no_local_override_file
+    test_unknown_override_is_lazy
+    test_configured_overrides_file
   ];
 
   # Run all tests - if any fail, the whole eval fails with a descriptive error
