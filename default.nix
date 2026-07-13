@@ -152,10 +152,10 @@ let
   # A local value wins when valid. If it cannot be used (for example because a
   # development path is unavailable in pure evaluation), try the explicit
   # override before falling back to the lockfile.
-  traceAppliedOverride =
+  warnAppliedOverride =
     name: sourceInfo:
     if warnOverrides then
-      builtins.warn "flake-compatish: overriding ${name} to ${sourceInfo.outPath}" sourceInfo
+      builtins.warn "flake-compatish: ${sourceString}: overriding ${name} to ${sourceInfo.outPath}" sourceInfo
     else
       sourceInfo;
 
@@ -167,12 +167,12 @@ let
       suppliedOverride = getOverride suppliedOverrides name;
     in
     if resolvedLocal != null then
-      traceAppliedOverride name resolvedLocal
+      warnAppliedOverride name resolvedLocal
     else if suppliedOverride != null then
       let
         resolvedSupplied = resolveOverride name suppliedOverride;
       in
-      if resolvedSupplied != null then traceAppliedOverride name resolvedSupplied else null
+      if resolvedSupplied != null then warnAppliedOverride name resolvedSupplied else null
     else
       null;
 
