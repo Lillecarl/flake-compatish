@@ -45,6 +45,7 @@ let
       throw "source must be a path that exists or a flakeRef";
 
   suppliedOverrides = normalizedArgs.overrides or { };
+  nixpkgsArgs = normalizedArgs.nixpkgsArgs or null;
   warnOverrides = normalizedArgs.warnOverrides or true;
 
   sourceString = toString source;
@@ -129,6 +130,19 @@ let
 
   lockFile = builtins.fromJSON (builtins.readFile lockFilePath);
 
+  # A master can provide the arguments for a configured nixpkgs import. The
+  # resulting package sets are created once per system from the root nixpkgs
+  # node, then reused as compatible flakes' self.legacyPackages entries.
+  masterNixpkgsNode =
+    if nixpkgsArgs == null then
+      null
+    else if !(builtins.pathExists lockFilePath) then
+      throw "nixpkgsArgs requires a flake.lock with a root nixpkgs input"
+    else if !(lockFile.nodes.${lockFile.root}.inputs ? nixpkgs) then
+      throw "nixpkgsArgs requires a root nixpkgs input"
+    else
+      resolveInputSpec lockFile.nodes.${lockFile.root}.inputs.nixpkgs;
+
   # This file belongs to the consumer and is normally gitignored.  By default
   # it is looked up relative to `source`, never relative to flake-compatish;
   # callers can select a different file with `overridesFile`.  `getEnv` is
@@ -206,6 +220,16 @@ let
   # This is a lazy attrset - nodes are only evaluated when accessed.
   evaluatedNodes = builtins.mapAttrs evaluateNode lockFile.nodes;
 
+  masterNixpkgs = if masterNixpkgsNode != null then evaluatedNodes.${masterNixpkgsNode} else null;
+
+  configuredLegacyPackages =
+    if masterNixpkgs != null then
+      builtins.mapAttrs (
+        system: _: import masterNixpkgs.outPath (nixpkgsArgs system)
+      ) masterNixpkgs.legacyPackages
+    else
+      null;
+
   # Evaluate a single lockfile node into its flake outputs
   evaluateNode =
     nodeName: node:
@@ -246,6 +270,18 @@ let
       # Call flake.outputs with resolved inputs + self reference
       flakeOutputs = flake.outputs (resolvedInputs // { self = flakeResult; });
 
+      injectedLegacyPackages =
+        if masterNixpkgsNode != null && nodeName != masterNixpkgsNode && flakeOutputs ? legacyPackages then
+          builtins.mapAttrs (
+            system: original:
+            if builtins.hasAttr system configuredLegacyPackages then
+              configuredLegacyPackages.${system}
+            else
+              original
+          ) flakeOutputs.legacyPackages
+        else
+          null;
+
       # Construct the final flake result with standard attributes
       flakeResult =
         flakeOutputs
@@ -256,7 +292,8 @@ let
           outputs = flakeOutputs;
           inherit sourceInfo;
           _type = "flake";
-        };
+        }
+        // (if injectedLegacyPackages != null then { legacyPackages = injectedLegacyPackages; } else { });
 
     in
     # node.flake defaults to true; if false, this is a non-flake source

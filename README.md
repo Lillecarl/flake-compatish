@@ -58,6 +58,28 @@ lockfile are considered. Missing or unavailable path overrides fall back to
 the lockfile. Applied overrides emit evaluation warnings by default; pass
 `warnOverrides = false;` to suppress them.
 
+### Shared package sets (experimental)
+
+Pass `nixpkgsArgs` to configure one package set per system. flake-compatish
+imports the root nixpkgs input once per existing system and makes the resulting
+sets available as `self.legacyPackages` to compatible flakes in the graph:
+
+```nix
+import flake-compatish {
+  source = ./.;
+  nixpkgsArgs = system: {
+    inherit system;
+    config.allowUnfree = true;
+  };
+}
+```
+
+Compatible flakes should construct their packages from
+`inputs.self.legacyPackages.${system}`. Only flakes that already expose
+`legacyPackages` are changed, and only for systems they already expose. When
+omitted, flake-compatish leaves each flake's own `legacyPackages` output
+unchanged.
+
 ### Output structure
 
 ```nix

@@ -2,6 +2,7 @@
   "nodes": {
     "root": {
       "inputs": {
+        "nixpkgs": "nixpkgs",
         "simple": "simple"
       }
     },
@@ -13,6 +14,17 @@
       },
       "original": {
         "path": "../simple",
+        "type": "path"
+      }
+    },
+    "nixpkgs": {
+      "locked": {
+        "lastModified": 0,
+        "path": "../fake-nixpkgs",
+        "type": "path"
+      },
+      "original": {
+        "path": "../fake-nixpkgs",
         "type": "path"
       }
     }

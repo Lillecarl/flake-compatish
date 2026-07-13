@@ -222,6 +222,44 @@ let
       result.outputs.testValue == "hello from simple"
     ) "Expected overrides to resolve when warnings are disabled";
 
+  # Test 17: One configured package set replaces self.legacyPackages for both
+  # the root flake and its resolved input flakes.
+  test_shared_legacy_packages =
+    let
+      result = flake-compatish {
+        source = ./fixtures/with-dep;
+        overrides = {
+          self = ./fixtures/with-dep;
+          simple = ./fixtures/simple;
+          nixpkgs = ./fixtures/fake-nixpkgs;
+        };
+        nixpkgsArgs = system: {
+          inherit system;
+          marker = "master-configured";
+        };
+      };
+    in
+    assert' "shared_legacy_packages" (
+      result.outputs.selfLegacyMarker == "master-configured"
+      && result.outputs.simpleLegacyMarker == "master-configured"
+    ) "Expected the shared package set to replace self.legacyPackages throughout the graph";
+
+  # Test 18: Without the option, every flake retains its own package set.
+  test_default_legacy_packages =
+    let
+      result = flake-compatish {
+        source = ./fixtures/with-dep;
+        overrides = {
+          self = ./fixtures/with-dep;
+          simple = ./fixtures/simple;
+        };
+      };
+    in
+    assert' "default_legacy_packages" (
+      result.outputs.selfLegacyMarker == "with-dep-local"
+      && result.outputs.simpleLegacyMarker == "simple-local"
+    ) "Expected each flake to retain its own legacyPackages without an injected package set";
+
   # Collect all tests
   allTests = [
     test_default_copies_to_store
@@ -240,6 +278,8 @@ let
     test_unknown_override_is_lazy
     test_configured_overrides_file
     test_warn_overrides_disabled
+    test_shared_legacy_packages
+    test_default_legacy_packages
   ];
 
   # Run all tests - if any fail, the whole eval fails with a descriptive error
