@@ -58,6 +58,20 @@ lockfile are considered. Missing or unavailable path overrides fall back to
 the lockfile. Applied overrides emit evaluation warnings by default; pass
 `warnOverrides = false;` to suppress them.
 
+### Disabling overrides
+
+Set `FLAKE_COMPATISH_DISABLE_OVERRIDES` to any value other than empty or `0` to
+ignore every override — supplied, local file, and `self` alike — and evaluate
+straight from the lockfile:
+
+```bash
+FLAKE_COMPATISH_DISABLE_OVERRIDES=1 nix build -f . packages.hello
+```
+
+This is a quick way to check whether a local checkout is responsible for a
+build result without editing any expressions. The source is copied to the store
+as it would be under the flake evaluator.
+
 ### Shared package sets (experimental)
 
 Pass `nixpkgsArgs` to configure one package set per system. flake-compatish

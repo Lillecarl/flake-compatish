@@ -16,6 +16,9 @@
 #       nixpkgs = "github:nixos/nixpkgs/master";     # string: parsed as flake ref
 #     };
 #   }
+#
+# Set FLAKE_COMPATISH_DISABLE_OVERRIDES=1 in the environment to ignore every
+# override and evaluate straight from the lockfile.
 
 # Accept both old style (just path) and new style (attrset with source/overrides)
 args:
@@ -143,6 +146,13 @@ let
     else
       resolveInputSpec lockFile.nodes.${lockFile.root}.inputs.nixpkgs;
 
+  # An escape hatch for reproducing a plain flake evaluation without editing
+  # the consumer's expressions: every override is ignored and each node comes
+  # from the lockfile.  `getEnv` is empty in pure evaluation, where overrides
+  # would already be lockfile-faithful anyway.
+  disableOverridesEnv = builtins.getEnv "FLAKE_COMPATISH_DISABLE_OVERRIDES";
+  overridesDisabled = disableOverridesEnv != "" && disableOverridesEnv != "0";
+
   # This file belongs to the consumer and is normally gitignored.  By default
   # it is looked up relative to `source`, never relative to flake-compatish;
   # callers can select a different file with `overridesFile`.  `getEnv` is
@@ -150,7 +160,7 @@ let
   # even when a dirty flake source happened to copy it into the store.
   isImpureEvaluation = builtins.getEnv "HOME" != "" || builtins.getEnv "USER" != "";
   localOverrides =
-    if isImpureEvaluation && optionalOverridesFileExists overridesFile then
+    if !overridesDisabled && isImpureEvaluation && optionalOverridesFileExists overridesFile then
       import overridesFile
     else
       { };
@@ -180,7 +190,9 @@ let
       resolvedLocal = if localOverride != null then resolveOverride name localOverride else null;
       suppliedOverride = getOverride suppliedOverrides name;
     in
-    if resolvedLocal != null then
+    if overridesDisabled then
+      null
+    else if resolvedLocal != null then
       warnAppliedOverride name resolvedLocal
     else if suppliedOverride != null then
       let
