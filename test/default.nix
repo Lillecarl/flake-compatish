@@ -260,8 +260,61 @@ let
       && result.outputs.simpleLegacyMarker == "simple-local"
     ) "Expected each flake to retain its own legacyPackages without an injected package set";
 
+  # Test 19: An override cannot reach an input two levels down. `deep` does
+  # not declare `simple`, so the name is not one of its root inputs and the
+  # override is ignored. This is the case `reroot` exists for.
+  test_override_misses_nested =
+    let
+      result = flake-compatish {
+        source = ./fixtures/deep;
+        overrides = {
+          self = ./fixtures/deep;
+          simple = ./fixtures/simple;
+        };
+      };
+    in
+    assert' "override_misses_nested" (isStorePath result.outputs.nestedSimplePath)
+      "Expected the nested simple to come from the lockfile, got: ${result.outputs.nestedSimplePath}";
+
+  # Test 20: reroot reaches it, because the key is the input name that
+  # with-dep uses and not the node the lockfile named.
+  test_reroot_reaches_nested =
+    let
+      simple = (flake-compatish {
+        source = ./fixtures/simple;
+        overrides.self = ./fixtures/simple;
+      }).outputs;
+      result = flake-compatish {
+        source = ./fixtures/deep;
+        overrides.self = ./fixtures/deep;
+        reroot = { inherit simple; };
+      };
+    in
+    assert' "reroot_reaches_nested" (
+      result.outputs.nestedSimplePath == fixturesPath + "/simple"
+    ) "Expected the nested simple to be the local one, got: ${result.outputs.nestedSimplePath}";
+
+  # Test 21: reroot replaces the flake and not only its source, so a value
+  # the rerooted flake computes is the one that arrives.
+  test_reroot_replaces_outputs =
+    let
+      simple = (flake-compatish { source = ./fixtures/simple; }).outputs // {
+        testValue = "hello from a rerooted simple";
+      };
+      result = flake-compatish {
+        source = ./fixtures/deep;
+        reroot = { inherit simple; };
+      };
+    in
+    assert' "reroot_replaces_outputs" (
+      result.outputs.nestedSimpleValue == "hello from a rerooted simple"
+    ) "Expected the rerooted outputs, got: ${result.outputs.nestedSimpleValue}";
+
   # Collect all tests
   allTests = [
+    test_override_misses_nested
+    test_reroot_reaches_nested
+    test_reroot_replaces_outputs
     test_default_copies_to_store
     test_override_self_no_store
     test_outputs_resolved
