@@ -1,0 +1,52 @@
+{
+  "nodes": {
+    "nixpkgs": {
+      "locked": {
+        "path": "../fake-nixpkgs",
+        "type": "path"
+      },
+      "original": {
+        "path": "../fake-nixpkgs",
+        "type": "path"
+      },
+      "parent": [
+        "with-dep"
+      ]
+    },
+    "root": {
+      "inputs": {
+        "with-dep": "with-dep"
+      }
+    },
+    "simple": {
+      "locked": {
+        "path": "../simple",
+        "type": "path"
+      },
+      "original": {
+        "path": "../simple",
+        "type": "path"
+      },
+      "parent": [
+        "with-dep"
+      ]
+    },
+    "with-dep": {
+      "inputs": {
+        "nixpkgs": "nixpkgs",
+        "simple": "simple"
+      },
+      "locked": {
+        "path": "../with-dep",
+        "type": "path"
+      },
+      "original": {
+        "path": "../with-dep",
+        "type": "path"
+      },
+      "parent": []
+    }
+  },
+  "root": "root",
+  "version": 7
+}

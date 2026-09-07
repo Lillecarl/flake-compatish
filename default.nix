@@ -259,6 +259,53 @@ let
   # Node evaluation
   ###########################################################################
 
+  # The sourceInfo of a node. A flake node carries it as an attribute; a node
+  # declared `flake = false` is one already.
+  nodeSourceInfo =
+    nodeName:
+    let
+      evaluated = evaluatedNodes.${nodeName};
+    in
+    evaluated.sourceInfo or evaluated;
+
+  # A `path:` input can be written relative to the flake that declares it,
+  # and the lockfile keeps it that way. `parent` records the chain of input
+  # names from the root to that flake, and an empty chain means the root
+  # itself. fetchTree refuses a relative path, so resolve it here.
+  isRelativePath =
+    locked: (locked.type or "") == "path" && builtins.substring 0 1 (locked.path or "/") != "/";
+
+  # Where a node's source lies before anything is copied.
+  #
+  # It has to be the original directory and not the store copy. `../simple`
+  # written next to `with-dep` means the sibling of the checkout, and the
+  # sibling of a store copy of that checkout is nothing.
+  #
+  # So a relative path composes onto its parent's original directory, and the
+  # chain ends at the root, whose directory is the source this was called
+  # with. A parent is always closer to the root, so this terminates.
+  #
+  # An override of the parent does not move the child. The chain follows the
+  # lockfile, so `../simple` under an overridden `with-dep` still means the
+  # sibling of the `with-dep` the lockfile named. That is what the lockfile
+  # says, and it is the same answer the flake evaluator gives.
+  originalDir =
+    nodeName:
+    if nodeName == lockFile.root then
+      sourceString
+    else
+      let
+        node = lockFile.nodes.${nodeName};
+      in
+      if isRelativePath node.locked then
+        originalDir (followPath lockFile.root (node.parent or [ ])) + "/" + node.locked.path
+      else
+        (nodeSourceInfo nodeName).outPath;
+
+  lockedOf =
+    nodeName: node:
+    if isRelativePath node.locked then node.locked // { path = originalDir nodeName; } else node.locked;
+
   # Evaluate all nodes in the lockfile into flake outputs.
   # This is a lazy attrset - nodes are only evaluated when accessed.
   evaluatedNodes = builtins.mapAttrs evaluateNode lockFile.nodes;
@@ -296,7 +343,7 @@ let
           }
         else
           # Dependency: fetch using lockfile info
-          fcFetchTree (node.info or { } // removeAttrs node.locked [ "dir" ]);
+          fcFetchTree (node.info or { } // removeAttrs (lockedOf nodeName node) [ "dir" ]);
 
       # Handle flakes in subdirectories (e.g., "dir" attribute in lockfile)
       subdir = if isRootNode then "" else node.locked.dir or "";
