@@ -17,6 +17,12 @@
 #     };
 #   }
 #
+#   # With reroot - use an already-evaluated flake for an input, at any depth
+#   import flake-compatish {
+#     source = ./.;
+#     reroot = { nanopynix = <an evaluated flake>; };
+#   }
+#
 # Set FLAKE_COMPATISH_DISABLE_OVERRIDES=1 in the environment to ignore every
 # override and evaluate straight from the lockfile.
 
@@ -48,6 +54,31 @@ let
       throw "source must be a path that exists or a flakeRef";
 
   suppliedOverrides = normalizedArgs.overrides or { };
+
+  # Flakes to use in place of what the lockfile says, keyed by the name the
+  # declaring flake gives the input.
+  #
+  # `overrides` replaces a node's *source* and keeps the lockfile's idea of
+  # that node's own inputs. That is enough one level down and not enough
+  # below it: a lockfile can hold a second node for the same dependency, so
+  # `nanopynix` reached from `easykubenix` takes `flake-compatish_2`, and no
+  # override reaches a name with a suffix.
+  #
+  # `reroot` replaces the whole flake instead. The caller evaluates each one
+  # itself, with whatever inputs it wants, and hands the result in here. So a
+  # caller that owns a set of related flakes can make every edge between them
+  # point at its own copy, at any depth, without writing `follows` anywhere.
+  #
+  # The key is the input name and not the node name, which is what makes it
+  # reach `flake-compatish_2`: the node has a suffix, the input that names it
+  # does not.
+  #
+  # An input declared `flake = false` is left alone. It is a source and not a
+  # flake, and the declaring expression reads it as a path.
+  #
+  # FLAKE_COMPATISH_DISABLE_OVERRIDES turns this off with the rest, because
+  # it means "read the lockfile and nothing else".
+  reroot = if overridesDisabled then { } else normalizedArgs.reroot or { };
   nixpkgsArgs = normalizedArgs.nixpkgsArgs or null;
   warnOverrides = normalizedArgs.warnOverrides or true;
 
@@ -276,7 +307,14 @@ let
 
       # Recursively resolve this node's inputs to evaluated flakes
       resolvedInputs = builtins.mapAttrs (
-        inputName: inputSpec: evaluatedNodes.${resolveInputSpec inputSpec}
+        inputName: inputSpec:
+        let
+          target = resolveInputSpec inputSpec;
+        in
+        if (lockFile.nodes.${target}.flake or true) && reroot ? ${inputName} then
+          reroot.${inputName}
+        else
+          evaluatedNodes.${target}
       ) (node.inputs or { });
 
       # Call flake.outputs with resolved inputs + self reference
