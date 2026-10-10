@@ -52,9 +52,32 @@ let
   # An input declared `flake = false` is left alone. It is a source and not a
   # flake, and the declaring expression reads it as a path.
   #
+  # A value can also be a function. It gets the flake the lockfile (and
+  # `overrides`) would have supplied, and returns the one to use. Flakes are
+  # attrsets, so `isFunction` tells the two forms apart.
+  #
   # FLAKE_COMPATISH_DISABLE_OVERRIDES turns this off with the rest, because
   # it means "read the lockfile and nothing else".
   reroot = if overridesDisabled then { } else normalizedArgs.reroot or { };
+
+  # Keyed by input name, then by target node. The function form is called
+  # once per pair and not once per edge: Nix memoizes attrset values and not
+  # function calls, and a function that imports nixpkgs is expensive.
+  rerootedNodes = builtins.mapAttrs (
+    inputName: value:
+    if builtins.isFunction value then
+      builtins.mapAttrs (target: _: value evaluatedNodes.${target}) lockFile.nodes
+    else
+      null
+  ) reroot;
+
+  rerootFor =
+    inputName: target:
+    let
+      value = reroot.${inputName};
+    in
+    if builtins.isFunction value then rerootedNodes.${inputName}.${target} else value;
+
   nixpkgsArgs = normalizedArgs.nixpkgsArgs or null;
   warnOverrides = normalizedArgs.warnOverrides or true;
 
@@ -335,7 +358,7 @@ let
           target = resolveInputSpec inputSpec;
         in
         if (lockFile.nodes.${target}.flake or true) && reroot ? ${inputName} then
-          reroot.${inputName}
+          rerootFor inputName target
         else
           evaluatedNodes.${target}
       ) (node.inputs or { });
