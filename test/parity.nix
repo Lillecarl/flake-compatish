@@ -7,7 +7,8 @@
 # reasons.
 #
 # Run with: nix eval --impure --file ./test/parity.nix
-# The fixtures must be committed: the flake evaluator reads the git tree.
+# The fixtures must be committed: the flake evaluator reads the git tree. A
+# clean shallow clone fails under both evaluators: no revCount.
 let
   flake-compatish = import ../.;
   repo = toString ../.;

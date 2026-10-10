@@ -19,6 +19,10 @@ jobs:
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@main
+        with:
+          # test/parity.nix reads this repository as a git flake, and the
+          # flake evaluator needs the history for revCount.
+          fetch-depth: 0
       - uses: cachix/install-nix-action@master
         with:
           # doc/default.nix imports <nixpkgs>, and the runner has no channel.
