@@ -1,0 +1,3 @@
+{
+  "path:../simple" = ./lockless;
+}

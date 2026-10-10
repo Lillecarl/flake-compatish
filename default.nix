@@ -22,6 +22,13 @@
     : An optional machine-local file of the same shape. It is read only in
       impure evaluation, and it wins over `overrides`.
 
+    `systemOverrides` (default `true`)
+    : The machine's overrides, matched by flake reference and not by name,
+      at every depth. `true` reads the file the NIX_PATH entry
+      `flake-compatish-overrides` names, `false` reads nothing, and a path,
+      attrset or function is used instead. Impure evaluation only. It wins
+      over `overrides` and loses to the local file.
+
     `warnOverrides` (default `true`)
     : Print a warning for each override that applies.
 
@@ -34,7 +41,8 @@
       input. The result replaces `self.legacyPackages` in compatible flakes.
 
   Set `FLAKE_COMPATISH_DISABLE_OVERRIDES=1` to ignore `overrides`, the local
-  file and `reroot`, and evaluate from the lockfile alone.
+  file, the system-wide overrides and `reroot`, and evaluate from the
+  lockfile alone.
 
   # Output
 

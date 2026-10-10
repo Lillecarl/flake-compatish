@@ -34,5 +34,20 @@ let
     else
       true;
 
+  systemIgnored =
+    let
+      result = flake-compatish {
+        source = ./fixtures/deep;
+        systemOverrides = ./fixtures/system-overrides.nix;
+      };
+    in
+    if result.outputs.nestedSimpleValue != "hello from simple" then
+      throw "expected the system-wide overrides to be ignored, got ${result.outputs.nestedSimpleValue}"
+    else
+      true;
+
 in
-if suppliedIgnored && localFileIgnored then "overrides disabled" else throw "unreachable"
+if suppliedIgnored && localFileIgnored && systemIgnored then
+  "overrides disabled"
+else
+  throw "unreachable"

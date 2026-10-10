@@ -273,6 +273,132 @@ let
     else
       { };
 
+  # The machine's overrides for every flake-compatish evaluation, matched by
+  # flake reference rather than by input name: one repository's `nixpkgs` can
+  # be another's 24.05 pin, so a name means nothing across repositories.
+  #
+  # Found through the NIX_PATH entry `flake-compatish-overrides`, read from
+  # `builtins.nixPath` and not through `<...>`. Pure evaluation has an empty
+  # `nixPath`, and the `isImpureEvaluation` gate covers an explicit value.
+  systemOverridesArg = normalizedArgs.systemOverrides or true;
+  systemOverridesEntries = builtins.filter (
+    entry: entry.prefix == "flake-compatish-overrides"
+  ) builtins.nixPath;
+  systemOverridesSource =
+    if systemOverridesArg == true then
+      (if systemOverridesEntries == [ ] then null else (builtins.head systemOverridesEntries).path)
+    else if systemOverridesArg == false then
+      null
+    else
+      systemOverridesArg;
+  systemOverrides =
+    if overridesDisabled || !isImpureEvaluation || systemOverridesSource == null then
+      null
+    else if builtins.isPath systemOverridesSource || builtins.isString systemOverridesSource then
+      (if optionalOverridesFileExists systemOverridesSource then import systemOverridesSource else null)
+    else
+      systemOverridesSource;
+
+  upperCase = builtins.genList (i: builtins.substring i 1 "ABCDEFGHIJKLMNOPQRSTUVWXYZ") 26;
+  lowerCase = builtins.genList (i: builtins.substring i 1 "abcdefghijklmnopqrstuvwxyz") 26;
+
+  /**
+    A flake reference attrset with `owner` and `repo` in lower case, because
+    GitHub, GitLab and SourceHut compare them that way, and a lockfile keeps
+    whatever case the flake author wrote.
+
+    # Type
+
+    ```
+    normalizeRef :: AttrSet -> AttrSet
+    ```
+  */
+  normalizeRef =
+    ref:
+    builtins.mapAttrs (
+      name: value:
+      if name == "owner" || name == "repo" then
+        builtins.replaceStrings upperCase lowerCase value
+      else
+        value
+    ) ref;
+
+  # Parsed once, not once per node.
+  systemOverrideKeys =
+    if builtins.isAttrs systemOverrides then
+      map (key: {
+        inherit key;
+        ref = normalizeRef (fcParseFlakeRef key);
+      }) (builtins.attrNames systemOverrides)
+    else
+      [ ];
+
+  /**
+    Whether every attribute of `key` is in `target` with the same value. So
+    `github:NixOS/nixpkgs` matches any branch, and
+    `github:NixOS/nixpkgs/nixos-unstable` only that one.
+
+    # Type
+
+    ```
+    refMatches :: AttrSet -> AttrSet -> Bool
+    ```
+  */
+  refMatches =
+    key: target:
+    builtins.all (name: target ? ${name} && target.${name} == key.${name}) (builtins.attrNames key);
+
+  /**
+    The system-wide override value for a lockfile node, or `null`.
+
+    A key matches the node's `original` or its `locked` reference. `locked`
+    is what lets `github:NixOS/nixpkgs` match an input written as the
+    registry name `nixpkgs`. When several keys match, the one with the most
+    attributes wins.
+
+    A function as the whole file gets `{ nodeName, original, locked }` and
+    returns the value or `null`.
+
+    # Type
+
+    ```
+    systemOverrideFor :: String -> AttrSet -> Any | Null
+    ```
+  */
+  systemOverrideFor =
+    nodeName: node:
+    if systemOverrides == null then
+      null
+    else if builtins.isFunction systemOverrides then
+      systemOverrides {
+        inherit nodeName;
+        original = node.original or { };
+        locked = node.locked or { };
+      }
+    else
+      let
+        targets = map normalizeRef (
+          builtins.filter (ref: ref != null) [
+            (node.original or null)
+            (node.locked or null)
+          ]
+        );
+        matching = builtins.filter (
+          candidate: builtins.any (refMatches candidate.ref) targets
+        ) systemOverrideKeys;
+        best = builtins.foldl' (
+          acc: candidate:
+          if
+            acc == null
+            || builtins.length (builtins.attrNames candidate.ref) > builtins.length (builtins.attrNames acc.ref)
+          then
+            candidate
+          else
+            acc
+        ) null matching;
+      in
+      if best == null then null else systemOverrides.${best.key};
+
   # Do not select an override value until its name is known to be valid. This
   # ignores typoed names and preserves laziness for arbitrary extra attrs.
   rootInputNames = builtins.attrNames (lockFile.nodes.${lockFile.root}.inputs or { });
@@ -295,51 +421,88 @@ let
   /**
     Return `sourceInfo`, with a warning first when `warnOverrides` is set.
 
+    `origin` is appended to the message, so it names where a system-wide
+    override came from.
+
     # Type
 
     ```
-    warnAppliedOverride :: String -> AttrSet -> AttrSet
+    warnAppliedOverride :: String -> String -> AttrSet -> AttrSet
     ```
   */
   warnAppliedOverride =
-    name: sourceInfo:
+    name: origin: sourceInfo:
     if warnOverrides then
-      builtins.warn "flake-compatish: ${sourceString}: overriding ${name} to ${sourceInfo.outPath}" sourceInfo
+      builtins.warn "flake-compatish: ${sourceString}: overriding ${name} to ${sourceInfo.outPath}${origin}" sourceInfo
     else
       sourceInfo;
 
   /**
-    The sourceInfo that overrides give for a name, or `null` to use the
-    lockfile.
+    The sourceInfo that overrides give for a lockfile node, or `null` to use
+    the lockfile.
 
-    A local value wins when valid. If it cannot be used, for example because
-    a development path is unavailable in pure evaluation, the explicit
-    override is tried before the lockfile.
+    The first value that can be used wins: the local file by name, then the
+    system-wide overrides by reference, then `overrides` by name. A value
+    that cannot be used, for example a development path that is unavailable
+    here, passes to the next. Each candidate is forced only when every one
+    before it has failed.
+
+    # Inputs
+
+    `name`
+    : The node name, or `self` for the root.
+
+    `node`
+    : The lockfile node, or `null` for the root, which no system-wide
+      override reaches.
 
     # Type
 
     ```
-    resolveNamedOverride :: String -> AttrSet | Null
+    resolveNodeOverride :: String -> AttrSet | Null -> AttrSet | Null
     ```
   */
-  resolveNamedOverride =
-    name:
+  resolveNodeOverride =
+    name: node:
     let
-      localOverride = getOverride localOverrides name;
-      resolvedLocal = if localOverride != null then resolveOverride name localOverride else null;
-      suppliedOverride = getOverride suppliedOverrides name;
+      candidates = [
+        {
+          value = getOverride localOverrides name;
+          origin = "";
+        }
+        {
+          value = if node == null then null else systemOverrideFor name node;
+          origin = " (system-wide)";
+        }
+        {
+          value = getOverride suppliedOverrides name;
+          origin = "";
+        }
+      ];
+      resolve =
+        candidate:
+        let
+          sourceInfo = if candidate.value == null then null else resolveOverride name candidate.value;
+        in
+        if sourceInfo == null then
+          null
+        else
+          {
+            inherit sourceInfo;
+            inherit (candidate) origin;
+          };
+      # `foldl'` forces each accumulator, so a candidate is resolved only
+      # once all before it gave `null`.
+      first = builtins.foldl' (
+        acc: candidate: if acc != null then acc else resolve candidate
+      ) null candidates;
     in
-    if overridesDisabled then
+    if overridesDisabled || first == null then
       null
-    else if resolvedLocal != null then
-      warnAppliedOverride name resolvedLocal
-    else if suppliedOverride != null then
-      let
-        resolvedSupplied = resolveOverride name suppliedOverride;
-      in
-      if resolvedSupplied != null then warnAppliedOverride name resolvedSupplied else null
     else
-      null;
+      warnAppliedOverride name first.origin first.sourceInfo;
+
+  resolveNamedOverride = name: resolveNodeOverride name null;
 
   /**
     The node name an input spec points at.
@@ -515,10 +678,8 @@ let
     let
       isRootNode = nodeName == lockFile.root;
 
-      # Check for user-provided override (use "self" key for root node)
-      overrideKey = if isRootNode then "self" else nodeName;
-      # Resolve override (returns null if path doesn't exist)
-      resolvedOverride = resolveNamedOverride overrideKey;
+      resolvedOverride =
+        if isRootNode then resolveNamedOverride "self" else resolveNodeOverride nodeName node;
 
       # Fetch or construct the source for this node
       sourceInfo =

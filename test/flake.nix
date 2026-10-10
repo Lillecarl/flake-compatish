@@ -29,5 +29,24 @@
       else
         throw "local override was unexpectedly applied during pure evaluation";
 
+    # Pure evaluation sees an empty NIX_PATH, and an explicit value is gated
+    # the same way as the local file. Pure fetchTree refuses an unlocked
+    # path, so `simple` comes from `overrides`, which a system-wide override
+    # would beat.
+    pureSystemOverride =
+      let
+        result = import flake-compatish {
+          source = ./fixtures/with-dep;
+          overrides = {
+            self = ./fixtures/with-dep;
+            simple = ./fixtures/simple;
+          };
+          systemOverrides = ./fixtures/system-overrides.nix;
+        };
+      in
+      if result.outputs.simpleValue == "hello from simple" then
+        "pure system overrides ignored"
+      else
+        throw "system-wide override was unexpectedly applied during pure evaluation";
   };
 }

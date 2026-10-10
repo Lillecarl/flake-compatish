@@ -1,0 +1,42 @@
+{
+  "nodes": {
+    "leaf": {
+      "locked": {
+        "lastModified": 1700000000,
+        "narHash": "sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
+        "owner": "Example",
+        "repo": "Leaf",
+        "rev": "0000000000000000000000000000000000000000",
+        "type": "github"
+      },
+      "original": {
+        "owner": "Example",
+        "ref": "main",
+        "repo": "Leaf",
+        "type": "github"
+      }
+    },
+    "registered": {
+      "locked": {
+        "lastModified": 1700000000,
+        "narHash": "sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
+        "owner": "Example",
+        "repo": "Leaf",
+        "rev": "0000000000000000000000000000000000000000",
+        "type": "github"
+      },
+      "original": {
+        "id": "leaf",
+        "type": "indirect"
+      }
+    },
+    "root": {
+      "inputs": {
+        "leaf": "leaf",
+        "registered": "registered"
+      }
+    }
+  },
+  "root": "root",
+  "version": 7
+}

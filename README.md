@@ -75,6 +75,7 @@ yourself if you still want to skip the copy.
 | `source` | required | The flake to evaluate. A path, or a flake reference string such as `"github:owner/repo"`. |
 | `overrides` | `{ }` | Replace the source of an input. See [Override an input's source](#override-an-inputs-source). |
 | `overridesFile` | `source + "/overrides.nix"` | The optional machine-local override file. See [Local overrides](#local-overrides). |
+| `systemOverrides` | `true` | The machine's overrides for every repository. See [System-wide overrides](#system-wide-overrides). |
 | `warnOverrides` | `true` | Print an evaluation warning for each override that applies. |
 | `reroot` | `{ }` | Replace an evaluated flake at any depth. See [Replace a flake](#replace-a-flake-reroot). |
 | `nixpkgsArgs` | `null` | Configure one shared nixpkgs per system. See [Shared package sets](#shared-package-sets-experimental). |
@@ -130,7 +131,8 @@ import flake-compatish {
 An override replaces the lockfile node with that name. Every flake in the
 graph that uses that node sees the override. A second copy of the same
 dependency has a suffixed node name, such as `nixpkgs_2`, and an override does
-not reach it. Use `follows` in `flake.nix`, or use `reroot`.
+not reach it. Use `follows` in `flake.nix`, a
+[system-wide override](#system-wide-overrides), or `reroot`.
 
 ### Local overrides
 
@@ -157,9 +159,83 @@ picks a different path.
   not see. The flake evaluator therefore never applies it, even when a dirty
   tree copied it into the store.
 - The same name rules apply as for `overrides`.
-- A local value wins over the same name in `overrides`. If the local value
-  cannot be used, for example a path that does not exist, the `overrides` value
-  applies. If neither can be used, the lockfile applies.
+- A local value wins over everything else. See [Precedence](#precedence).
+
+### System-wide overrides
+
+The local file belongs to one repository. A system-wide file belongs to the
+machine, and applies to every repository that uses flake-compatish.
+
+It matches inputs by **flake reference**, not by name. Names belong to each
+project: one repository's `nixpkgs` can be nixos-unstable, and another's can
+be a 24.05 pin. A key names the dependency itself:
+
+```nix
+{
+  "github:NixOS/nixpkgs" = ~/Code/nixpkgs;          # any branch
+  "github:nix-community/home-manager/master" = ~/Code/home-manager;  # this branch only
+}
+```
+
+Point the NIX_PATH entry `flake-compatish-overrides` at the file:
+
+```bash
+export NIX_PATH="flake-compatish-overrides=$HOME/.config/flake-compatish/overrides.nix:$NIX_PATH"
+```
+
+On NixOS or home-manager, `nix.nixPath` sets it declaratively. `-I
+flake-compatish-overrides=…` sets it for one command.
+
+- **A key matches** a lockfile node when every part of the key equals that
+  part of the node's `original` or `locked` reference. `github:NixOS/nixpkgs`
+  matches every branch. `github:NixOS/nixpkgs/nixos-unstable` matches one.
+  `locked` is what lets `github:NixOS/nixpkgs` match an input written as the
+  registry name `nixpkgs`.
+- **Owner and repository ignore case**, as GitHub does. A lockfile keeps the
+  case the flake author wrote.
+- **The most specific key wins** when several match: the one with the most
+  parts.
+- **It reaches every depth.** Matching runs on each lockfile node, so it also
+  reaches `nixpkgs_2` and the copies that `overrides` cannot.
+- **Values** are the same as for `overrides`: a path used in place, or a flake
+  reference string. A path that does not exist passes to the next source.
+- **Impure evaluation only.** Pure evaluation has an empty NIX_PATH, so the
+  flake evaluator never applies it.
+- **Strict names never apply.** Most keys name a dependency that a given
+  repository does not have.
+
+For full control, the file can be a function instead of an attrset. It gets
+each node, and returns a value or `null`:
+
+```nix
+{ nodeName, original, locked }:
+if original.type or "" == "github" && original.owner or "" == "NixOS" then
+  ~/Code/nixpkgs
+else
+  null
+```
+
+`systemOverrides` changes where the overrides come from:
+
+| value | effect |
+| --- | --- |
+| `true` | read the NIX_PATH entry, if there is one |
+| `false` | read nothing, for a repository that must opt out |
+| a path, an attrset or a function | use it instead of the NIX_PATH entry |
+
+### Precedence
+
+flake-compatish takes the first source that gives a usable value for a
+node:
+
+1. the local `overrides.nix`, by input name
+2. the system-wide overrides, by flake reference
+3. the `overrides` argument, by input name
+4. the lockfile
+
+Machine-local intent beats the defaults a project commits. A value that
+cannot be used, such as a path that does not exist here, passes to the next
+source.
 
 ### Warnings
 
@@ -169,7 +245,8 @@ Each override that applies prints one line:
 evaluation warning: flake-compatish: /home/me/project: overriding nixpkgs to /home/me/Code/nixpkgs
 ```
 
-The first path is the root `source`. Pass
+The first path is the root `source`. A system-wide override ends with
+`(system-wide)`. Pass
 `warnOverrides = false;` to turn the warnings off.
 
 ### Disable every override
@@ -180,7 +257,8 @@ Set `FLAKE_COMPATISH_DISABLE_OVERRIDES` to anything other than empty or `0`:
 FLAKE_COMPATISH_DISABLE_OVERRIDES=1 nix build --file . impure.packages.hello
 ```
 
-flake-compatish then ignores `overrides`, the local file, `self` and `reroot`,
+flake-compatish then ignores `overrides`, the local file, the system-wide
+overrides, `self` and `reroot`,
 and evaluates from the lockfile alone. The source is copied to the store, as
 the flake evaluator does. Use it to check whether a local checkout causes a
 result, with no edit to any file. `nixpkgsArgs` still applies.
