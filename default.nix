@@ -73,7 +73,8 @@
     source = ./.;
     overrides = {
       self = ./.;
-      nixpkgs = ~/Code/nixpkgs;
+      # Not `~/Code/nixpkgs`: pure evaluation rejects `~` while parsing.
+      nixpkgs = /. + builtins.getEnv "HOME" + "/Code/nixpkgs";
     };
   }
   ```

@@ -108,11 +108,14 @@ yourself if you still want to skip the copy.
 inputs that `flake.lock` gives it.
 
 ```nix
+let
+  home = /. + builtins.getEnv "HOME";
+in
 import flake-compatish {
   source = ./.;
   overrides = {
     self = ./.;                                 # the root itself
-    nixpkgs = ~/Code/nixpkgs;                   # a path: used in place, no copy
+    nixpkgs = home + "/Code/nixpkgs";           # a path: used in place, no copy
     home-manager = "github:nix-community/home-manager/master";  # a string: fetched
   };
 }
@@ -133,6 +136,20 @@ graph that uses that node sees the override. A second copy of the same
 dependency has a suffixed node name, such as `nixpkgs_2`, and an override does
 not reach it. Use `follows` in `flake.nix`, a
 [system-wide override](#system-wide-overrides), or `reroot`.
+
+### Paths in your home directory
+
+Nix expands `~/Code/nixpkgs` in impure evaluation only. In pure evaluation,
+Nix rejects the whole file while it parses it, even when nothing reads that
+value, and `tryEval` cannot catch the error.
+
+- **`~` is safe** in the local `overrides.nix`, in the
+  [system-wide file](#system-wide-overrides), and in `nix … --impure --expr`.
+  flake-compatish reads the two files in impure evaluation only.
+- **In a committed file**, such as `default.nix`, use
+  `/. + builtins.getEnv "HOME" + "/Code/nixpkgs"`. In pure evaluation `getEnv`
+  returns an empty string, so the path does not exist and the lockfile
+  applies.
 
 ### Local overrides
 
@@ -276,7 +293,7 @@ an input of that name:
 
 ```nix
 let
-  nanopynix = (import flake-compatish ~/Code/nanopynix).outputs;
+  nanopynix = (import flake-compatish (/. + builtins.getEnv "HOME" + "/Code/nanopynix")).outputs;
 in
 import flake-compatish {
   source = ./.;
@@ -381,8 +398,10 @@ You do not need `lib.nix` to get this. `default.nix` returns the same result
 as `compatish`, from the same evaluation, and computes it only when you read
 it:
 
-```nix
-(import ./.).compatish.override { overrides.nixpkgs = ~/Code/nixpkgs; }
+```bash
+nix build --impure --expr '
+  ((import ./.).compatish.override { overrides.nixpkgs = ~/Code/nixpkgs; })
+    .impure.packages.default'
 ```
 
 ### `override`
@@ -415,11 +434,14 @@ When a project's `default.nix` uses flake-compatish, another project can take
 a configured copy of it at any depth:
 
 ```nix
+let
+  home = /. + builtins.getEnv "HOME";
+in
 import flake-compatish {
   source = ./.;
   reroot.mylib = _:
-    ((import ~/Code/mylib).compatish.override {
-      overrides.nixpkgs = ~/Code/nixpkgs;
+    ((import (home + "/Code/mylib")).compatish.override {
+      overrides.nixpkgs = home + "/Code/nixpkgs";
     }).outputs;
 }
 ```

@@ -49,7 +49,8 @@ in
       fc = import "${flake-compatish}/lib.nix";
       flake = fc.new ./.;
     in
-    (flake.override { overrides.nixpkgs = ~/Code/nixpkgs; }).impure.packages.default
+    (flake.override { overrides.nixpkgs = /. + builtins.getEnv "HOME" + "/Code/nixpkgs"; })
+      .impure.packages.default
     ```
 
     :::
