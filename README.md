@@ -123,6 +123,11 @@ in
 The result has `inputs`, `outputs` and `impure` as before, plus `args`,
 `sources` and `override`.
 
+`default.nix` also returns this result as `compatish`, for the same
+evaluation. So a consumer that already imports `default.nix` can write
+`(import ./.).compatish.override { … }` without a second entrypoint. The
+strict name check applies only to what you read through `compatish`.
+
 ### Override after import
 
 An attrset merges into the arguments. `overrides` and `reroot` merge key by

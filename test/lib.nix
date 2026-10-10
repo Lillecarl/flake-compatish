@@ -144,7 +144,34 @@ let
       result.outputs.nestedSimplePath == "${fixturesPath}/simple"
     ) "Expected the overridden simple two levels down, got: ${result.outputs.nestedSimplePath}";
 
+  fromDefault = import ../. {
+    source = ./fixtures/with-dep;
+    overrides.self = ./fixtures/with-dep;
+  };
+
+  test_default_compatish_overrides =
+    let
+      result = fromDefault.compatish.override { overrides.simple = ./fixtures/simple; };
+    in
+    assert' "default_compatish_overrides"
+      (result.outputs.simplePath == "${fixturesPath}/simple" && !(isStorePath result.outputs.selfPath))
+      "Expected compatish.override to keep the default.nix arguments, got: ${result.outputs.simplePath}";
+
+  # default.nix stays lenient, and strictness only bites through compatish.
+  test_default_compatish_strict_only_there =
+    let
+      result = import ../. {
+        source = ./fixtures/with-dep;
+        overrides.simpel = ./fixtures/simple;
+      };
+    in
+    assert' "default_compatish_strict_only_there" (
+      result.outputs.testValue == "hello from with-dep" && fails result.compatish.outputs
+    ) "Expected the typo to pass default.nix and abort compatish";
+
   allTests = [
+    test_default_compatish_overrides
+    test_default_compatish_strict_only_there
     test_compose
     test_path_argument
     test_override_merges

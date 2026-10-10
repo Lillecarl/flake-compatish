@@ -2,20 +2,7 @@
 # flake-compat shim; this adds what sprinkles has and it lacks.
 let
   core = import ./nix/core.nix;
-
-  mergeArgs =
-    prev: update:
-    prev
-    // update
-    // {
-      overrides = prev.overrides or { } // update.overrides or { };
-      reroot = prev.reroot or { } // update.reroot or { };
-    };
-
-  unknownNames =
-    given: known: builtins.filter (name: !(builtins.elem name known)) (builtins.attrNames given);
-
-  quoteNames = names: builtins.concatStringsSep ", " (map (name: "`${name}`") names);
+  overridable = import ./nix/overridable.nix;
 in
 {
   /**
@@ -64,33 +51,5 @@ in
 
     :::
   */
-  new =
-    let
-      new =
-        args:
-        let
-          evaluated = core args;
-          strict = evaluated.args.strict or true;
-          badOverrides = unknownNames (evaluated.args.overrides or { }) evaluated.overrideNames;
-          badReroots = unknownNames (evaluated.args.reroot or { }) evaluated.rerootNames;
-          result = evaluated.compat // {
-            inherit (evaluated) args sources;
-            override =
-              update:
-              new (
-                if builtins.isFunction update then
-                  evaluated.args // update evaluated.args
-                else
-                  mergeArgs evaluated.args update
-              );
-          };
-        in
-        if strict && badOverrides != [ ] then
-          throw "flake-compatish: no input to override named ${quoteNames badOverrides}; known: ${quoteNames evaluated.overrideNames}"
-        else if strict && badReroots != [ ] then
-          throw "flake-compatish: no input to reroot named ${quoteNames badReroots}; known: ${quoteNames evaluated.rerootNames}"
-        else
-          result;
-    in
-    new;
+  new = args: overridable (core args);
 }

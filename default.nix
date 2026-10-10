@@ -26,5 +26,10 @@
 # Set FLAKE_COMPATISH_DISABLE_OVERRIDES=1 in the environment to ignore every
 # override and evaluate straight from the lockfile.
 #
-# For chainable overrides and strict override names, see lib.nix.
-args: (import ./nix/core.nix args).compat
+# `compatish` holds the lib.nix result for the same evaluation: chainable
+# overrides and strict override names. See lib.nix.
+args:
+let
+  evaluated = import ./nix/core.nix args;
+in
+evaluated.compat // { compatish = import ./nix/overridable.nix evaluated; }
