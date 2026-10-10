@@ -104,6 +104,86 @@ unchanged.
 }
 ```
 
+## The involved entrypoint: `lib.nix`
+
+`default.nix` is a flake-compat shim and stays one. `lib.nix` evaluates the
+same flake the same way, and returns a result you can override again after
+import. The idea comes from [sprinkles](https://git.afnix.fr/sprinkles/sprinkles).
+
+Use it from the consumer's `default.nix`:
+
+```nix
+let
+  lock = builtins.fromJSON (builtins.readFile ./flake.lock);
+  flake-compatish = builtins.fetchTree lock.nodes.flake-compatish.locked;
+in
+(import "${flake-compatish}/lib.nix").new ./.
+```
+
+The result has `inputs`, `outputs` and `impure` as before, plus `args`,
+`sources` and `override`.
+
+### Override after import
+
+An attrset merges into the arguments. `overrides` and `reroot` merge key by
+key, so each call adds to the previous one:
+
+```bash
+nix build --impure --expr '
+  ((import ./.).override { overrides.nixpkgs = ~/Code/nixpkgs; })
+    .impure.packages.default'
+```
+
+A function gets the previous arguments and returns the attrset to merge with
+`//`. Use it to remove a key:
+
+```nix
+flake.override (prev: { overrides = removeAttrs prev.overrides [ "nixpkgs" ]; })
+```
+
+### Reroot with a function
+
+A `reroot` value can be a function. It gets the flake that would have been
+used, and returns the one to use. This configures nixpkgs everywhere the
+graph names it `nixpkgs`:
+
+```nix
+(import "${flake-compatish}/lib.nix").new {
+  source = ./.;
+  reroot.nixpkgs = prev: prev // {
+    legacyPackages = builtins.mapAttrs (system: _:
+      import prev.outPath { inherit system; config.allowUnfree = true; }
+    ) prev.legacyPackages;
+  };
+}
+```
+
+flake-compatish calls the function once for each input name and lockfile
+node, not once for each edge.
+
+This replaces the `nixpkgs` *input*. It is not the same as `nixpkgsArgs`, which
+replaces each flake's own `self.legacyPackages`.
+
+### Compose projects
+
+When a project's `default.nix` returns `lib.nix` output, another project can
+use a configured copy of it at any depth:
+
+```nix
+(import "${flake-compatish}/lib.nix").new {
+  source = ./.;
+  reroot.mylib = _:
+    ((import ~/Code/mylib).override { overrides.nixpkgs = ~/Code/nixpkgs; }).outputs;
+}
+```
+
+### Strict names
+
+`lib.nix` aborts on an `overrides` name that is not `self` or a root input,
+and on a `reroot` name that no flake in the graph declares. The error lists
+the names it knows. Pass `strict = false;` to ignore unknown names, as
+`default.nix` does. A local `overrides.nix` is never checked.
+
 ## Running tests
 
 ```bash
