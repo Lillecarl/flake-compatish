@@ -365,11 +365,15 @@ Pass `strict = false;` to ignore unknown names, as `default.nix` does.
 
 ## API reference
 
+The documentation site is at <https://lillecarl.github.io/flake-compatish/>.
+It holds this README and an API reference.
+
 Every function carries a [nixdoc](https://github.com/nix-community/nixdoc)
-comment. Generate the reference as Markdown:
+comment, and the reference is generated from them. Build it yourself:
 
 ```bash
-nix build --file ./doc && cat result
+nix build --file ./doc api    # the reference as Markdown
+nix build --file ./doc site   # the HTML site
 ```
 
 It covers `default.nix`, `lib.nix`, and the attributes that the internal
