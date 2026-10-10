@@ -273,7 +273,9 @@ let
         };
       };
     in
-    assert' "override_misses_nested" (isStorePath result.outputs.nestedSimplePath)
+    assert' "override_misses_nested" (
+      result.outputs.nestedSimplePath == "${fixturesPath}/deep/../with-dep/../simple"
+    )
       "Expected the nested simple to come from the lockfile, got: ${result.outputs.nestedSimplePath}";
 
   # Test 20: reroot reaches it, because the key is the input name that

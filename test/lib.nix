@@ -50,7 +50,9 @@ let
         overrides = removeAttrs prev.overrides [ "simple" ];
       });
     in
-    assert' "override_function_removes" (isStorePath result.outputs.simplePath)
+    assert' "override_function_removes" (
+      result.outputs.simplePath == "${fixturesPath}/with-dep/../simple"
+    )
       "Expected simple to come from the lockfile again, got: ${result.outputs.simplePath}";
 
   test_sources =
@@ -59,7 +61,7 @@ let
     in
     assert' "sources" (
       result.sources.simple.outPath == "${fixturesPath}/simple"
-      && isStorePath result.sources.nixpkgs.outPath
+      && result.sources.nixpkgs.outPath == "${fixturesPath}/with-dep/../fake-nixpkgs"
     ) "Expected sources to show the override and the lockfile, got: ${result.sources.simple.outPath}";
 
   test_strict_rejects_override_typo = assert' "strict_rejects_override_typo" (fails

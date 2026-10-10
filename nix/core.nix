@@ -25,12 +25,26 @@ let
         };
       };
 
+  srcArg = normalizedArgs.source;
+  sourceRef = if builtins.isString srcArg then fcParseFlakeRef srcArg else null;
+
+  # A flake reference is fetched once, and its sourceInfo is the root's, as
+  # with the flake evaluator. fetchTree does not take `dir`; the flake is in
+  # that subdirectory of the tree.
+  # fetchTree fetches git shallow unless told not to, and gives no
+  # `revCount` then; the flake evaluator gives one (Nix 2.35).
+  sourceTree =
+    if sourceRef == null then
+      null
+    else
+      fcFetchTree (
+        (if sourceRef.type == "git" then { shallow = false; } else { }) // removeAttrs sourceRef [ "dir" ]
+      );
+  sourceDir = if sourceRef == null then "" else sourceRef.dir or "";
+
   source =
-    let
-      srcArg = normalizedArgs.source;
-    in
-    if builtins.isString srcArg then
-      fcFetchTree (fcParseFlakeRef srcArg)
+    if sourceTree != null then
+      (if sourceDir == "" then sourceTree.outPath else "${sourceTree.outPath}/${sourceDir}")
     else if builtins.pathExists srcArg then
       srcArg
     else
@@ -239,7 +253,28 @@ let
   # Lockfile parsing
   ###########################################################################
 
-  lockFile = builtins.fromJSON (builtins.readFile lockFilePath);
+  # A flake without `flake.lock` has no inputs except `self`, which is the
+  # lockfile the flake evaluator would write for it in memory.
+  lockFile =
+    if hasLockFile then
+      builtins.fromJSON (builtins.readFile lockFilePath)
+    else
+      {
+        nodes.root = { };
+        root = "root";
+        version = 7;
+      };
+
+  # The root's source when there is no `self` override. A path is copied to
+  # the store here.
+  rootSourceInfo =
+    if sourceTree != null then
+      sourceTree
+    else
+      fcFetchTree {
+        type = "path";
+        path = sourceString;
+      };
 
   # A master can provide the arguments for a configured nixpkgs import. The
   # resulting package sets are created once per system from the root nixpkgs
@@ -686,7 +721,12 @@ let
       stale = if isRootNode then builtins.filter (name: !(builtins.elem name declared)) locked else [ ];
       where = if isRootNode then lockFilePath else "node `${nodeName}` of ${lockFilePath}";
     in
-    if missing != [ ] then
+    if missing != [ ] && !hasLockFile then
+      throw (
+        "flake-compatish: ${flakeDir}/flake.nix declares inputs, and there is no flake.lock: "
+        + "${quoteNames missing}. Run `nix flake lock`."
+      )
+    else if missing != [ ] then
       throw (
         "flake-compatish: ${flakeDir}/flake.nix declares inputs that ${where} does not have: "
         + "${quoteNames missing}. Run `nix flake lock`."
@@ -751,29 +791,12 @@ let
   ###########################################################################
 
   /**
-    The sourceInfo of a node. A flake node carries it as an attribute; a node
-    declared `flake = false` is one already.
-
-    # Type
-
-    ```
-    nodeSourceInfo :: String -> AttrSet
-    ```
-  */
-  nodeSourceInfo =
-    nodeName:
-    let
-      evaluated = evaluatedNodes.${nodeName};
-    in
-    evaluated.sourceInfo or evaluated;
-
-  /**
     Whether a locked input is a relative `path:`.
 
     A `path:` input can be written relative to the flake that declares it,
     and the lockfile keeps it that way. `parent` records the chain of input
     names from the root to that flake, and an empty chain means the root
-    itself. fetchTree refuses a relative path, so `lockedOf` resolves it.
+    itself.
 
     # Type
 
@@ -785,53 +808,106 @@ let
     locked: (locked.type or "") == "path" && builtins.substring 0 1 (locked.path or "/") != "/";
 
   /**
-    Where a node's source lies before anything is copied.
+    Where a node is, before its flake is evaluated:
 
-    It has to be the original directory and not the store copy. `../simple`
-    written next to `with-dep` means the sibling of the checkout, and the
-    sibling of a store copy of that checkout is nothing.
+    - `sourceInfo`: the tree, fetched or used in place.
+    - `outPath`: the flake's directory, which is not `sourceInfo.outPath`
+      when the flake is in a subdirectory.
+    - `relativeBase`: the directory that a relative `path:` input of this
+      flake starts from.
+    - `isolated`: whether `sourceInfo` holds this directory only, without
+      its siblings.
 
-    So a relative path composes onto its parent's original directory, and the
-    chain ends at the root, whose directory is the source this was called
-    with. A parent is always closer to the root, so this terminates.
+    This follows `call-flake.nix` of the flake evaluator. An override wins.
+    A relative input is in its parent's tree: it takes the parent's
+    sourceInfo, and its directory is under the parent's directory. So it is
+    not fetched, and an override of the parent moves it.
 
-    An override of the parent does not move the child. The chain follows the
-    lockfile, so `../simple` under an overridden `with-dep` still means the
-    sibling of the `with-dep` the lockfile named. That is what the lockfile
-    says, and it is the same answer the flake evaluator gives.
+    A `path:` source is copied to the store without its siblings, and the
+    flake evaluator cannot reach a sibling from there. flake-compatish
+    starts from the original directory instead, and copies each relative
+    input by itself.
+
+    It is separate from `evaluatedNodes`, so a child reads its parent's
+    directory without forcing the parent's outputs.
 
     # Type
 
     ```
-    originalDir :: String -> String
+    nodeLocations :: AttrSet
     ```
   */
-  originalDir =
-    nodeName:
-    if nodeName == lockFile.root then
-      sourceString
-    else
-      let
-        node = lockFile.nodes.${nodeName};
-      in
-      if isRelativePath node.locked then
-        originalDir (followPath lockFile.root (node.parent or [ ])) + "/" + node.locked.path
-      else
-        (nodeSourceInfo nodeName).outPath;
+  nodeLocations = builtins.mapAttrs (
+    nodeName: node:
+    let
+      isRootNode = nodeName == lockFile.root;
+      # Inside the context: a string override is fetched while it resolves.
+      override = withNodeContext "fetching" nodeName (
+        if isRootNode then resolveNamedOverride "self" else resolveNodeOverride nodeName node
+      );
+      isRelative = !isRootNode && override == null && isRelativePath node.locked;
+      parent = nodeLocations.${followPath lockFile.root (node.parent or [ ])};
+      inParentTree = isRelative && !parent.isolated;
+      subdir =
+        if !isRootNode then
+          node.locked.dir or ""
+        else if override == null then
+          sourceDir
+        else
+          "";
+      withSubdir = dir: dir + (if subdir == "" then "" else "/" + subdir);
+      relativeDir = parent.relativeBase + (if node.locked.path == "" then "" else "/" + node.locked.path);
+
+      sourceInfo = withNodeContext "fetching" nodeName (
+        if override != null then
+          override
+        else if isRootNode then
+          rootSourceInfo
+        else if inParentTree then
+          parent.sourceInfo
+        else if isRelative then
+          fcFetchTree {
+            type = "path";
+            path = relativeDir;
+          }
+        else
+          fcFetchTree (node.info or { } // removeAttrs node.locked [ "dir" ])
+      );
+
+      outPath = if inParentTree then relativeDir else withSubdir sourceInfo.outPath;
+      copiedPath = override == null && (if isRootNode then sourceTree == null else node.locked.type or "" == "path");
+    in
+    {
+      inherit sourceInfo outPath;
+      isolated = copiedPath && !inParentTree;
+      relativeBase =
+        if !copiedPath || inParentTree then
+          outPath
+        else if isRootNode then
+          withSubdir sourceString
+        else if isRelative then
+          withSubdir relativeDir
+        else
+          withSubdir node.locked.path;
+    }
+  ) lockFile.nodes;
 
   /**
-    A node's `locked` attrset, with a relative path made absolute so that
-    fetchTree accepts it.
+    `value`, with error context that names the input of a node. The root
+    needs none: its errors name its files.
 
     # Type
 
     ```
-    lockedOf :: String -> AttrSet -> AttrSet
+    withNodeContext :: String -> String -> a -> a
     ```
   */
-  lockedOf =
-    nodeName: node:
-    if isRelativePath node.locked then node.locked // { path = originalDir nodeName; } else node.locked;
+  withNodeContext =
+    step: nodeName: value:
+    if nodeName == lockFile.root then
+      value
+    else
+      builtins.addErrorContext "while ${step} the flake input ${describeNode nodeName}" value;
 
   # Evaluate all nodes in the lockfile into flake outputs.
   # This is a lazy attrset - nodes are only evaluated when accessed.
@@ -868,39 +944,10 @@ let
   evaluateNode =
     nodeName: node:
     let
-      isRootNode = nodeName == lockFile.root;
+      withContext = step: withNodeContext step nodeName;
+      inherit (nodeLocations.${nodeName}) sourceInfo;
+      flakePath = nodeLocations.${nodeName}.outPath;
 
-      resolvedOverride =
-        if isRootNode then resolveNamedOverride "self" else resolveNodeOverride nodeName node;
-
-      # The root needs no context: the error already names its files.
-      withContext =
-        step: value:
-        if isRootNode then
-          value
-        else
-          builtins.addErrorContext "while ${step} the flake input ${describeNode nodeName}" value;
-
-      # Fetch or construct the source for this node
-      sourceInfo = withContext "fetching" (
-        if resolvedOverride != null then
-          resolvedOverride
-        else if isRootNode then
-          # Root node: fetch from source path
-          fcFetchTree {
-            type = "path";
-            path = sourceString;
-          }
-        else
-          # Dependency: fetch using lockfile info
-          fcFetchTree (node.info or { } // removeAttrs (lockedOf nodeName node) [ "dir" ])
-      );
-
-      # Handle flakes in subdirectories (e.g., "dir" attribute in lockfile)
-      subdir = if isRootNode then "" else node.locked.dir or "";
-      flakePath = if subdir == "" then sourceInfo.outPath else "${sourceInfo.outPath}/${subdir}";
-
-      # Import and evaluate the flake
       flake = withContext "evaluating" (import (flakePath + "/flake.nix"));
 
       # Recursively resolve this node's inputs to evaluated flakes
@@ -939,7 +986,7 @@ let
         flakeOutputs
         // sourceInfo
         // {
-          outPath = flakePath; # May differ from sourceInfo.outPath if subdir
+          outPath = flakePath;
           inputs = resolvedInputs;
           outputs = flakeOutputs;
           inherit sourceInfo;
@@ -948,65 +995,22 @@ let
         // (if injectedLegacyPackages != null then { legacyPackages = injectedLegacyPackages; } else { });
 
     in
-    # node.flake defaults to true; if false, this is a non-flake source
     if node.flake or true then
       assert builtins.isFunction flake.outputs;
       flakeResult
     else
-      sourceInfo;
-
-  ###########################################################################
-  # Lockless flake support
-  ###########################################################################
-
-  /**
-    A flake with no `flake.lock`, and so no inputs except `self`.
-
-    # Type
-
-    ```
-    evaluateLocklessFlake :: Path -> AttrSet
-    ```
-  */
-  evaluateLocklessFlake =
-    flakeSrc:
-    let
-      flake = import (flakeSrc + "/flake.nix");
-      sourceInfo = mkSourceInfo flakeSrc;
-      declared = declaredInputNames flake;
-      flakeOutputs =
-        if declared != [ ] then
-          throw (
-            "flake-compatish: ${toString flakeSrc}/flake.nix declares inputs, and there is no flake.lock: "
-            + "${quoteNames declared}. Run `nix flake lock`."
-          )
-        else
-          flake.outputs { self = flakeResult; };
-      flakeResult = flakeOutputs // sourceInfo;
-    in
-    flakeResult;
-
-  # Determine root source path (respects overrides.self)
-  rootSourcePath =
-    let
-      resolved = resolveNamedOverride "self";
-    in
-    if resolved != null then
-      resolved.outPath
-    else
-      (fcFetchTree {
-        type = "path";
-        path = sourceString;
-      }).outPath;
+      sourceInfo
+      // {
+        inherit sourceInfo;
+        outPath = flakePath;
+      };
 
   ###########################################################################
   # Main entry point
   ###########################################################################
 
   rootFlake =
-    if !(builtins.pathExists lockFilePath) then
-      evaluateLocklessFlake rootSourcePath
-    else if lockFile.version >= 5 && lockFile.version <= 7 then
+    if lockFile.version >= 5 && lockFile.version <= 7 then
       evaluatedNodes.${lockFile.root}
     else
       throw "Unsupported flake.lock version ${toString lockFile.version} (supported: 5-7)";
@@ -1060,7 +1064,11 @@ in
   sources =
     if hasLockFile then
       builtins.mapAttrs (
-        _: inputSpec: nodeSourceInfo (resolveInputSpec inputSpec)
+        _: inputSpec:
+        let
+          location = nodeLocations.${resolveInputSpec inputSpec};
+        in
+        location.sourceInfo // { inherit (location) outPath; }
       ) lockFile.nodes.${lockFile.root}.inputs or { }
     else
       { };

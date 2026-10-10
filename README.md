@@ -422,7 +422,7 @@ in
 | attribute | value |
 | --- | --- |
 | `args` | the arguments this result was evaluated with |
-| `sources` | the root's inputs as fetched: after `overrides`, before `reroot` |
+| `sources` | the root's inputs as fetched: after `overrides`, before `reroot`. `outPath` is the input's directory |
 | `override` | evaluates again with changed arguments |
 
 You do not need `lib.nix` to get this. `default.nix` returns the same result
