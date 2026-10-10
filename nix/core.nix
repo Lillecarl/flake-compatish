@@ -264,6 +264,10 @@ let
   # Pure evaluation removes `currentSystem` from `builtins`. Not a `getEnv`
   # test: an impure evaluation with an empty environment, such as `env -i`
   # or a systemd unit, has no HOME or USER either.
+  #
+  # The override files are gated by this and not wrapped in `tryEval`: pure
+  # mode rejects `~` while parsing, and `tryEval` around the `import` does
+  # not catch that (Nix 2.35). Skipping the import is the only safe form.
   isImpureEvaluation = builtins ? currentSystem;
 
   # This file belongs to the consumer and is normally gitignored.  By default
