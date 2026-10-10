@@ -1,5 +1,8 @@
-# flake-compatish, the involved entrypoint. `default.nix` stays the plain
-# flake-compat shim; this adds what sprinkles has and it lacks.
+/**
+  The overridable entrypoint. `default.nix` stays a plain flake-compat shim;
+  this one returns a result you can override again after import, after
+  [sprinkles](https://git.afnix.fr/sprinkles/sprinkles).
+*/
 let
   core = import ./nix/core.nix;
   overridable = import ./nix/overridable.nix;
@@ -43,7 +46,7 @@ in
 
     ```nix
     let
-      fc = import flake-compatish/lib.nix;
+      fc = import "${flake-compatish}/lib.nix";
       flake = fc.new ./.;
     in
     (flake.override { overrides.nixpkgs = ~/Code/nixpkgs; }).impure.packages.default

@@ -1,10 +1,29 @@
-# Wraps one core evaluation into the overridable result that lib.nix
-# documents. Takes the core's output, not its arguments, so default.nix can
-# share a single evaluation between its own attributes and `compatish`.
-# Not public API.
+/**
+  Wraps one core evaluation into the overridable result that `lib.nix`
+  documents. Internal.
+
+  It takes the core's output, not its arguments, so `default.nix` can share
+  a single evaluation between its own attributes and `compatish`.
+
+  # Type
+
+  ```
+  overridable :: CoreResult -> AttrSet
+  ```
+*/
 let
   core = import ./core.nix;
 
+  /**
+    Merge an override attrset into arguments. `overrides` and `reroot` merge
+    key by key; every other key replaces.
+
+    # Type
+
+    ```
+    mergeArgs :: AttrSet -> AttrSet -> AttrSet
+    ```
+  */
   mergeArgs =
     prev: update:
     prev
@@ -14,6 +33,15 @@ let
       reroot = prev.reroot or { } // update.reroot or { };
     };
 
+  /**
+    The names of `given` that are not in `known`.
+
+    # Type
+
+    ```
+    unknownNames :: AttrSet -> [String] -> [String]
+    ```
+  */
   unknownNames =
     given: known: builtins.filter (name: !(builtins.elem name known)) (builtins.attrNames given);
 

@@ -1,12 +1,19 @@
-# The evaluator behind both entrypoints. `default.nix` returns `compat`
-# only; `lib.nix` also reads the introspection attributes beside it.
-# Not public API.
+/**
+  The evaluator behind both entrypoints. Internal: the public interface is
+  `default.nix` and `lib.nix`.
 
-# Accept both old style (just path) and new style (attrset with source/overrides)
+  `default.nix` returns `compat`. `nix/overridable.nix` also reads the
+  attributes beside it.
+
+  # Inputs
+
+  `args`
+  : A path, or the attrset `default.nix` documents.
+*/
 args:
 
 let
-  # Normalize arguments: support both `flake-compatish ./.` and `flake-compatish { source = ./.; }`
+  # `import flake-compatish ./.` means "this directory, in place".
   normalizedArgs =
     if builtins.isAttrs args then
       args
@@ -71,6 +78,23 @@ let
       null
   ) reroot;
 
+  /**
+    The flake `reroot` gives for an input name that points at a node.
+
+    # Inputs
+
+    `inputName`
+    : A key of `reroot`.
+
+    `target`
+    : The lockfile node the input would have resolved to.
+
+    # Type
+
+    ```
+    rerootFor :: String -> String -> AttrSet
+    ```
+  */
   rerootFor =
     inputName: target:
     let
@@ -89,7 +113,16 @@ let
   # Helpers
   ###########################################################################
 
-  # Wrapper for builtins.fetchTree with better error message
+  /**
+    `builtins.fetchTree`, with an error that names the requirement when the
+    builtin is missing.
+
+    # Type
+
+    ```
+    fcFetchTree :: AttrSet -> AttrSet
+    ```
+  */
   fcFetchTree =
     info:
     let
@@ -101,6 +134,16 @@ let
     in
     ft info;
 
+  /**
+    `builtins.parseFlakeRef`, with an error that names the requirement when
+    the builtin is missing.
+
+    # Type
+
+    ```
+    fcParseFlakeRef :: String -> AttrSet
+    ```
+  */
   fcParseFlakeRef =
     info:
     let
@@ -112,20 +155,45 @@ let
     in
     prf info;
 
-  # Create a fake sourceInfo for paths we don't want to copy to store
+  /**
+    A sourceInfo for a path used in place, without a store copy.
+
+    # Type
+
+    ```
+    mkSourceInfo :: Path -> AttrSet
+    ```
+  */
   mkSourceInfo = path: {
     lastModified = 0;
     lastModifiedDate = "19700101000000";
     outPath = toString path;
   };
 
-  # Resolve an override value to sourceInfo, or null if invalid.
-  # - path: use directly without store copy (fast local development)
-  # - string: parse as flake reference and fetch (e.g., "github:owner/repo")
-  #
-  # `tryEval` does not make a missing file safe to import, so callers must
-  # guard imports with `pathExists` first.  This check only forces the
-  # candidate selected by its declared input name.
+  /**
+    The sourceInfo for one override value, or `null` when it cannot be used.
+
+    A path that exists is used in place. A string is a flake reference and is
+    fetched. Anything else, and a value that fails to evaluate, gives `null`.
+
+    `tryEval` does not make a missing file safe to import, so callers must
+    guard imports with `pathExists` first. This check only forces the
+    candidate selected by its declared input name.
+
+    # Inputs
+
+    `name`
+    : The input name, for the caller's warning.
+
+    `override`
+    : The value from `overrides` or the local file.
+
+    # Type
+
+    ```
+    resolveOverride :: String -> (Path | String) -> AttrSet | Null
+    ```
+  */
   resolveOverride =
     name: override:
     let
@@ -146,10 +214,20 @@ let
     else
       null;
 
-  # `pathExists` must run before `import`; wrapping an import in `tryEval` does
-  # not reliably turn a missing-file error into a value.  The extra `tryEval`
-  # converts ordinary evaluation failures from a configurable path expression
-  # into an absent optional file.
+  /**
+    Whether the optional local override file can be imported.
+
+    `pathExists` must run before `import`; wrapping an import in `tryEval`
+    does not reliably turn a missing-file error into a value. The extra
+    `tryEval` converts ordinary evaluation failures from a configurable path
+    expression into an absent optional file.
+
+    # Type
+
+    ```
+    optionalOverridesFileExists :: Path -> Bool
+    ```
+  */
   optionalOverridesFileExists =
     path:
     let
@@ -199,13 +277,30 @@ let
   # ignores typoed names and preserves laziness for arbitrary extra attrs.
   rootInputNames = builtins.attrNames (lockFile.nodes.${lockFile.root}.inputs or { });
   isDeclaredOverrideName = name: name == "self" || builtins.elem name rootInputNames;
+
+  /**
+    The value `overrides` gives for a name, or `null`. The value is not
+    forced.
+
+    # Type
+
+    ```
+    getOverride :: AttrSet -> String -> Any | Null
+    ```
+  */
   getOverride =
     overrides: name:
     if isDeclaredOverrideName name && builtins.hasAttr name overrides then overrides.${name} else null;
 
-  # A local value wins when valid. If it cannot be used (for example because a
-  # development path is unavailable in pure evaluation), try the explicit
-  # override before falling back to the lockfile.
+  /**
+    Return `sourceInfo`, with a warning first when `warnOverrides` is set.
+
+    # Type
+
+    ```
+    warnAppliedOverride :: String -> AttrSet -> AttrSet
+    ```
+  */
   warnAppliedOverride =
     name: sourceInfo:
     if warnOverrides then
@@ -213,6 +308,20 @@ let
     else
       sourceInfo;
 
+  /**
+    The sourceInfo that overrides give for a name, or `null` to use the
+    lockfile.
+
+    A local value wins when valid. If it cannot be used, for example because
+    a development path is unavailable in pure evaluation, the explicit
+    override is tried before the lockfile.
+
+    # Type
+
+    ```
+    resolveNamedOverride :: String -> AttrSet | Null
+    ```
+  */
   resolveNamedOverride =
     name:
     let
@@ -232,17 +341,45 @@ let
     else
       null;
 
-  # Resolve an input spec to a node name.
-  # Input specs are either:
-  #   - A string: direct reference to a node (e.g., "nixpkgs")
-  #   - A list: "follows" path to traverse (e.g., ["dwarffs", "nixpkgs"])
+  /**
+    The node name an input spec points at.
+
+    # Inputs
+
+    `inputSpec`
+    : A node name such as `"nixpkgs"`, or a `follows` path from the root such
+      as `[ "dwarffs" "nixpkgs" ]`.
+
+    # Type
+
+    ```
+    resolveInputSpec :: (String | [String]) -> String
+    ```
+  */
   resolveInputSpec =
     inputSpec: if builtins.isList inputSpec then followPath lockFile.root inputSpec else inputSpec;
 
-  # Follow a "follows" path through the lockfile node graph.
-  # Example: followPath "root" ["dwarffs", "nixpkgs"]
-  #   1. Look up root's input "dwarffs" -> resolves to node "dwarffs"
-  #   2. Look up dwarffs's input "nixpkgs" -> resolves to final node
+  /**
+    Walk a `follows` path through the lockfile graph, one input name at a
+    time.
+
+    # Type
+
+    ```
+    followPath :: String -> [String] -> String
+    ```
+
+    # Examples
+    :::{.example}
+    ## `followPath` usage example
+
+    ```nix
+    followPath "root" [ "dwarffs" "nixpkgs" ]
+    => "nixpkgs_2"   # the node dwarffs names as its nixpkgs
+    ```
+
+    :::
+  */
   followPath =
     nodeName: path:
     if path == [ ] then
@@ -258,8 +395,16 @@ let
   # Node evaluation
   ###########################################################################
 
-  # The sourceInfo of a node. A flake node carries it as an attribute; a node
-  # declared `flake = false` is one already.
+  /**
+    The sourceInfo of a node. A flake node carries it as an attribute; a node
+    declared `flake = false` is one already.
+
+    # Type
+
+    ```
+    nodeSourceInfo :: String -> AttrSet
+    ```
+  */
   nodeSourceInfo =
     nodeName:
     let
@@ -267,27 +412,45 @@ let
     in
     evaluated.sourceInfo or evaluated;
 
-  # A `path:` input can be written relative to the flake that declares it,
-  # and the lockfile keeps it that way. `parent` records the chain of input
-  # names from the root to that flake, and an empty chain means the root
-  # itself. fetchTree refuses a relative path, so resolve it here.
+  /**
+    Whether a locked input is a relative `path:`.
+
+    A `path:` input can be written relative to the flake that declares it,
+    and the lockfile keeps it that way. `parent` records the chain of input
+    names from the root to that flake, and an empty chain means the root
+    itself. fetchTree refuses a relative path, so `lockedOf` resolves it.
+
+    # Type
+
+    ```
+    isRelativePath :: AttrSet -> Bool
+    ```
+  */
   isRelativePath =
     locked: (locked.type or "") == "path" && builtins.substring 0 1 (locked.path or "/") != "/";
 
-  # Where a node's source lies before anything is copied.
-  #
-  # It has to be the original directory and not the store copy. `../simple`
-  # written next to `with-dep` means the sibling of the checkout, and the
-  # sibling of a store copy of that checkout is nothing.
-  #
-  # So a relative path composes onto its parent's original directory, and the
-  # chain ends at the root, whose directory is the source this was called
-  # with. A parent is always closer to the root, so this terminates.
-  #
-  # An override of the parent does not move the child. The chain follows the
-  # lockfile, so `../simple` under an overridden `with-dep` still means the
-  # sibling of the `with-dep` the lockfile named. That is what the lockfile
-  # says, and it is the same answer the flake evaluator gives.
+  /**
+    Where a node's source lies before anything is copied.
+
+    It has to be the original directory and not the store copy. `../simple`
+    written next to `with-dep` means the sibling of the checkout, and the
+    sibling of a store copy of that checkout is nothing.
+
+    So a relative path composes onto its parent's original directory, and the
+    chain ends at the root, whose directory is the source this was called
+    with. A parent is always closer to the root, so this terminates.
+
+    An override of the parent does not move the child. The chain follows the
+    lockfile, so `../simple` under an overridden `with-dep` still means the
+    sibling of the `with-dep` the lockfile named. That is what the lockfile
+    says, and it is the same answer the flake evaluator gives.
+
+    # Type
+
+    ```
+    originalDir :: String -> String
+    ```
+  */
   originalDir =
     nodeName:
     if nodeName == lockFile.root then
@@ -301,6 +464,16 @@ let
       else
         (nodeSourceInfo nodeName).outPath;
 
+  /**
+    A node's `locked` attrset, with a relative path made absolute so that
+    fetchTree accepts it.
+
+    # Type
+
+    ```
+    lockedOf :: String -> AttrSet -> AttrSet
+    ```
+  */
   lockedOf =
     nodeName: node:
     if isRelativePath node.locked then node.locked // { path = originalDir nodeName; } else node.locked;
@@ -319,7 +492,24 @@ let
     else
       null;
 
-  # Evaluate a single lockfile node into its flake outputs
+  /**
+    One lockfile node, evaluated: a flake result, or a sourceInfo for a node
+    declared `flake = false`.
+
+    # Inputs
+
+    `nodeName`
+    : The node's key in `lockFile.nodes`.
+
+    `node`
+    : The node itself.
+
+    # Type
+
+    ```
+    evaluateNode :: String -> AttrSet -> AttrSet
+    ```
+  */
   evaluateNode =
     nodeName: node:
     let
@@ -403,7 +593,15 @@ let
   # Lockless flake support
   ###########################################################################
 
-  # For flakes without a lockfile (no dependencies)
+  /**
+    A flake with no `flake.lock`, and so no inputs except `self`.
+
+    # Type
+
+    ```
+    evaluateLocklessFlake :: Path -> AttrSet
+    ```
+  */
   evaluateLocklessFlake =
     flakeSrc:
     let
@@ -443,6 +641,10 @@ let
 
 in
 {
+  /**
+    What `default.nix` returns, without `compatish`: `inputs`, `outputs` and
+    `impure`.
+  */
   compat = {
     # Standard flake-compat interface
     inputs = (rootFlake.inputs or { }) // {
@@ -455,13 +657,21 @@ in
     impure = builtins.mapAttrs (name: value: value.${builtins.currentSystem} or value) rootFlake;
   };
 
+  /**
+    The arguments as an attrset. A path argument becomes
+    `{ source = path; overrides.self = path; }`.
+  */
   args = normalizedArgs;
 
-  # The names `overrides` accepts.
+  /**
+    The names `overrides` accepts: `self` and the root's inputs.
+  */
   overrideNames = [ "self" ] ++ (if hasLockFile then rootInputNames else [ ]);
 
-  # The names `reroot` accepts: every flake input name declared anywhere in
-  # the graph.
+  /**
+    The names `reroot` accepts: every input name declared anywhere in the
+    graph.
+  */
   rerootNames =
     if hasLockFile then
       builtins.attrNames (
@@ -470,7 +680,9 @@ in
     else
       [ ];
 
-  # The root's inputs as fetched, after `overrides` and before `reroot`.
+  /**
+    The root's inputs as fetched, after `overrides` and before `reroot`.
+  */
   sources =
     if hasLockFile then
       builtins.mapAttrs (
