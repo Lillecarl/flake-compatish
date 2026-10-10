@@ -1,0 +1,50 @@
+name: Pages
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pages-${{ github.ref }}
+  # A cancelled deploy can leave Pages half published; only PR runs cancel.
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@main
+      - uses: cachix/install-nix-action@master
+        with:
+          # doc/default.nix imports <nixpkgs>, and the runner has no channel.
+          nix_path: nixpkgs=channel:nixpkgs-unstable
+      - name: Build the site
+        run: nix build --file ./doc site --out-link site --print-build-logs
+      # The upload action wants plain files; a store path is read-only
+      # symlinks.
+      - name: Prepare the Pages artifact
+        run: cp -rL --no-preserve=mode,ownership site public
+      - uses: actions/upload-pages-artifact@main
+        with:
+          path: public
+
+  deploy:
+    if: github.event_name != 'pull_request'
+    needs: build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/configure-pages@main
+      - id: deployment
+        uses: actions/deploy-pages@main
