@@ -45,13 +45,37 @@ let
         }
       ];
 
-  compare =
-    ref:
-    diff [ ] (summarize (builtins.getFlake ref)) (
-      summarize (flake-compatish { source = ref; }).outputs
+  compare = compareWith summarize;
+
+  # nixpkgs has no flake.lock. Its outputs are too large to compare whole;
+  # a package's drvPath and `lib.version` stand for them.
+  nixpkgs = toString <nixpkgs>;
+  summarizeNixpkgs = flake: {
+    attrs = builtins.attrNames flake;
+    inherit (flake) _type outPath sourceInfo;
+    inputs = builtins.attrNames flake.inputs;
+    outputs = builtins.attrNames flake.outputs;
+    version = flake.lib.version;
+    hello = flake.legacyPackages.${builtins.currentSystem}.hello.drvPath;
+  };
+  compareNixpkgs = compareWith summarizeNixpkgs;
+
+  /**
+    Compare under `summary`. The flake evaluator goes first: after a
+    `fetchTree` of the same path in the same evaluation, `getFlake` gives a
+    sourceInfo with `outPath` alone (Nix 2.35).
+  */
+  compareWith =
+    summary: ref:
+    let
+      real = builtins.getFlake ref;
+    in
+    builtins.seq (builtins.attrNames real.sourceInfo) (
+      diff [ ] (summary real) (summary (flake-compatish { source = ref; }).outputs)
     );
 
   comparisons = {
+    nixpkgs = compareNixpkgs "path:${nixpkgs}";
     leaf = compare (gitRef "leaf");
     mid = compare (gitRef "mid");
     top = compare (gitRef "top");
@@ -62,7 +86,18 @@ let
   inPlace = (flake-compatish (/. + "${repo}/test/parity/top")).outputs;
   copied = (flake-compatish { source = /. + "${repo}/test/parity/top"; }).outputs;
 
+  nixpkgsInPlace = (flake-compatish (/. + nixpkgs)).outputs;
+
   deviations = {
+    # nixpkgs in place: the same package set, with the in-place sourceInfo.
+    nixpkgsInPlace =
+      nixpkgsInPlace.legacyPackages.${builtins.currentSystem}.hello.drvPath
+      == (builtins.getFlake "path:${nixpkgs}").legacyPackages.${builtins.currentSystem}.hello.drvPath
+      && builtins.attrNames nixpkgsInPlace.sourceInfo == [
+        "lastModified"
+        "lastModifiedDate"
+        "outPath"
+      ];
     # A path is used in place: no store copy, so no narHash, and no time.
     inPlaceSourceInfo = inPlace.sourceInfo == {
       lastModified = 0;

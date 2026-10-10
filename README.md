@@ -375,7 +375,7 @@ This is not the same as a `reroot.nixpkgs` function. `reroot` replaces the
 With a flake reference as `source`, flake-compatish gives what
 `builtins.getFlake` gives: the same attributes, `sourceInfo`, `outPath` and
 outputs, at every depth. `test/parity.nix` compares the two on fixtures
-that `nix flake lock` locked. It also asserts each difference below, so a
+that `nix flake lock` locked, and on `<nixpkgs>`, which has no `flake.lock`. It also asserts each difference below, so a
 change to one fails the tests.
 
 - **A path used in place.** The path form, or `overrides.self`, evaluates
