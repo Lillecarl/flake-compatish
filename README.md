@@ -390,6 +390,18 @@ When the `url` of a root input no longer gives the reference in
 `flake.lock`, flake-compatish prints a warning and uses the locked
 reference.
 
+### Errors in an input
+
+An error while flake-compatish fetches or evaluates an input names the
+chain of input names from the root:
+
+```
+… while fetching the flake input `tool → nixpkgs` (node `nixpkgs_2`)
+```
+
+The node name is shown when it differs from the last input name. A node
+that several chains reach shows the shortest one.
+
 ## Overridable results: `lib.nix`
 
 `default.nix` stays a plain flake-compat shim. `lib.nix` gives a result that

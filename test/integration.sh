@@ -56,6 +56,13 @@ stale changed-url simpleValue >"$log" 2>&1
 grep -qF 'changes the url of `simple`' "$log"
 grep -qxF '"hello from simple"' "$log"
 
+# An error in a nested input names the input path.
+nested() {
+  nix eval --impure --expr "(import ./. { source = ./test/fixtures/deep; systemOverrides.\"path:../simple\" = $1; }).outputs.nestedSimpleValue"
+}
+expect_error 'while evaluating the flake input `with-dep → simple`' nested ./test/fixtures/broken
+expect_error 'while fetching the flake input `with-dep → simple`' nested '"path:/nonexistent-flake-compatish"'
+
 nix build --no-link --file ./doc site
 cp test/fixtures/with-dep/overrides.nix.in "$override_file"
 nix eval --impure --file ./test/local-overrides.nix

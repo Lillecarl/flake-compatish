@@ -562,6 +562,56 @@ let
       in
       followPath nextNodeName (builtins.tail path);
 
+  # The shortest chain of input names from the root to each node, for error
+  # messages. A node can have several chains; `genericClosure` walks
+  # breadth first and keeps the first.
+  inputPaths = builtins.listToAttrs (
+    map (item: {
+      name = item.key;
+      value = item.path;
+    }) (
+      builtins.genericClosure {
+        startSet = [
+          {
+            key = lockFile.root;
+            path = [ ];
+          }
+        ];
+        operator =
+          item:
+          builtins.attrValues (
+            builtins.mapAttrs (inputName: spec: {
+              key = resolveInputSpec spec;
+              path = item.path ++ [ inputName ];
+            }) (lockFile.nodes.${item.key}.inputs or { })
+          );
+      }
+    )
+  );
+
+  /**
+    A node as a user names it, such as `` `tool → nixpkgs` (node `nixpkgs_2`) ``.
+    The node name is left out when the last input name is the same.
+
+    # Type
+
+    ```
+    describeNode :: String -> String
+    ```
+  */
+  describeNode =
+    nodeName:
+    let
+      path = inputPaths.${nodeName} or [ ];
+      chain = builtins.concatStringsSep " → " path;
+    in
+    if path == [ ] then
+      "node `${nodeName}`"
+    else if builtins.elemAt path (builtins.length path - 1) == nodeName then
+      "`${chain}`"
+    else
+      "`${chain}` (node `${nodeName}`)";
+
   ###########################################################################
   # Lockfile freshness
   ###########################################################################
@@ -823,8 +873,16 @@ let
       resolvedOverride =
         if isRootNode then resolveNamedOverride "self" else resolveNodeOverride nodeName node;
 
+      # The root needs no context: the error already names its files.
+      withContext =
+        step: value:
+        if isRootNode then
+          value
+        else
+          builtins.addErrorContext "while ${step} the flake input ${describeNode nodeName}" value;
+
       # Fetch or construct the source for this node
-      sourceInfo =
+      sourceInfo = withContext "fetching" (
         if resolvedOverride != null then
           resolvedOverride
         else if isRootNode then
@@ -835,14 +893,15 @@ let
           }
         else
           # Dependency: fetch using lockfile info
-          fcFetchTree (node.info or { } // removeAttrs (lockedOf nodeName node) [ "dir" ]);
+          fcFetchTree (node.info or { } // removeAttrs (lockedOf nodeName node) [ "dir" ])
+      );
 
       # Handle flakes in subdirectories (e.g., "dir" attribute in lockfile)
       subdir = if isRootNode then "" else node.locked.dir or "";
       flakePath = if subdir == "" then sourceInfo.outPath else "${sourceInfo.outPath}/${subdir}";
 
       # Import and evaluate the flake
-      flake = import (flakePath + "/flake.nix");
+      flake = withContext "evaluating" (import (flakePath + "/flake.nix"));
 
       # Recursively resolve this node's inputs to evaluated flakes
       resolvedInputs = builtins.mapAttrs (
@@ -857,8 +916,10 @@ let
       ) (node.inputs or { });
 
       # Call flake.outputs with resolved inputs + self reference
-      flakeOutputs = checkLockFresh nodeName node flakePath flake (
-        flake.outputs (resolvedInputs // { self = flakeResult; })
+      flakeOutputs = withContext "evaluating" (
+        checkLockFresh nodeName node flakePath flake (
+          flake.outputs (resolvedInputs // { self = flakeResult; })
+        )
       );
 
       injectedLegacyPackages =
