@@ -365,11 +365,30 @@ This is not the same as a `reroot.nixpkgs` function. `reroot` replaces the
 - `follows`, at any depth.
 - A flake in a subdirectory, `?dir=sub`.
 - Inputs with `flake = false`. They arrive as a source, not as a flake.
-- A relative `path:` input, such as `path:../sibling`. flake-compatish
-  resolves it against the directory of the flake that declares it, not
-  against a store copy. An override of that flake does not move the relative
-  input: `../sibling` still means the sibling the lockfile named, as with the
-  flake evaluator.
+- A relative `path:` input, such as `path:../sibling`. It is in the tree of
+  the flake that declares it, as with the flake evaluator: it shares that
+  flake's `sourceInfo`, and an override of that flake moves it. Under a
+  flake used in place, it is in place too.
+
+### Differences from the flake evaluator
+
+With a flake reference as `source`, flake-compatish gives what
+`builtins.getFlake` gives: the same attributes, `sourceInfo`, `outPath` and
+outputs, at every depth. `test/parity.nix` compares the two on fixtures
+that `nix flake lock` locked. It also asserts each difference below, so a
+change to one fails the tests.
+
+- **A path used in place.** The path form, or `overrides.self`, evaluates
+  the directory itself. `sourceInfo` is only `outPath`, `lastModified = 0`
+  and its date, because nothing is hashed or copied. That is the purpose of
+  the form.
+- **A copied path with siblings.** `source = ./.` copies the directory
+  alone. The flake evaluator then cannot reach `path:../sibling`.
+  flake-compatish starts from the original directory, and copies each
+  sibling by itself, with its own `sourceInfo`.
+- **A stale lockfile** is an error, not a new lock. See below.
+- **Overrides, `reroot` and `nixpkgsArgs`** change the result on purpose.
+  They are not in the flake evaluator.
 
 ### A stale lockfile
 

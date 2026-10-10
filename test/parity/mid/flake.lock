@@ -1,0 +1,47 @@
+{
+  "nodes": {
+    "data": {
+      "flake": false,
+      "locked": {
+        "path": "../data",
+        "type": "path"
+      },
+      "original": {
+        "path": "../data",
+        "type": "path"
+      },
+      "parent": []
+    },
+    "leaf": {
+      "locked": {
+        "path": "../leaf",
+        "type": "path"
+      },
+      "original": {
+        "path": "../leaf",
+        "type": "path"
+      },
+      "parent": []
+    },
+    "nested": {
+      "locked": {
+        "path": "../nested/sub",
+        "type": "path"
+      },
+      "original": {
+        "path": "../nested/sub",
+        "type": "path"
+      },
+      "parent": []
+    },
+    "root": {
+      "inputs": {
+        "data": "data",
+        "leaf": "leaf",
+        "nested": "nested"
+      }
+    }
+  },
+  "root": "root",
+  "version": 7
+}

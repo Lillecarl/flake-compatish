@@ -30,6 +30,7 @@ system_overrides="flake-compatish-overrides=$PWD/test/fixtures/system-overrides.
 nix eval --impure --file ./test
 nix eval --impure --file ./test/lib.nix
 nix eval --impure --file ./test/system-overrides.nix -I "$system_overrides"
+nix eval --impure --file ./test/parity.nix
 
 # HOME names the fixtures, so `~` does too. The XDG variables keep Nix's
 # own cache, state and config where they were. `real_home` is read first:

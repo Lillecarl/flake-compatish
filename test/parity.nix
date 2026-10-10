@@ -1,0 +1,94 @@
+# Compares flake-compatish with the flake evaluator, `builtins.getFlake`, on
+# the flakes in ./parity. Their lockfiles are what `nix flake lock` writes.
+#
+# A flake reference as `source` must give exactly what the flake evaluator
+# gives, at every depth. `deviations` asserts each documented difference,
+# so a change that removes one fails too. The README lists them, with the
+# reasons.
+#
+# Run with: nix eval --impure --file ./test/parity.nix
+# The fixtures must be committed: the flake evaluator reads the git tree.
+let
+  flake-compatish = import ../.;
+  repo = toString ../.;
+  gitRef = name: "git+file://${repo}?dir=test/parity/${name}";
+  pathRef = name: "path:${repo}/test/parity/${name}";
+
+  summarize =
+    flake:
+    if flake ? _type then
+      {
+        attrs = builtins.attrNames flake;
+        inherit (flake) _type outPath sourceInfo outputs;
+        inputs = builtins.mapAttrs (_: summarize) flake.inputs;
+      }
+    else
+      flake;
+
+  /**
+    The places where `real` and `compat` differ, as a list of
+    `{ path; real; compat; }`. Attrsets are compared key by key.
+  */
+  diff =
+    path: real: compat:
+    if builtins.isAttrs real && builtins.isAttrs compat then
+      builtins.concatMap (
+        name: diff (path ++ [ name ]) (real.${name} or "<missing>") (compat.${name} or "<missing>")
+      ) (builtins.attrNames (real // compat))
+    else if real == compat then
+      [ ]
+    else
+      [
+        {
+          path = builtins.concatStringsSep "." path;
+          inherit real compat;
+        }
+      ];
+
+  compare =
+    ref:
+    diff [ ] (summarize (builtins.getFlake ref)) (
+      summarize (flake-compatish { source = ref; }).outputs
+    );
+
+  comparisons = {
+    leaf = compare (gitRef "leaf");
+    mid = compare (gitRef "mid");
+    top = compare (gitRef "top");
+    # A `path:` flake with no relative inputs: both copy the directory alone.
+    leafPath = compare (pathRef "leaf");
+  };
+
+  inPlace = (flake-compatish (/. + "${repo}/test/parity/top")).outputs;
+  copied = (flake-compatish { source = /. + "${repo}/test/parity/top"; }).outputs;
+
+  deviations = {
+    # A path is used in place: no store copy, so no narHash, and no time.
+    inPlaceSourceInfo = inPlace.sourceInfo == {
+      lastModified = 0;
+      lastModifiedDate = "19700101000000";
+      outPath = "${repo}/test/parity/top";
+    };
+    # Its relative inputs are in place too, under the checkout.
+    inPlaceRelative = inPlace.leafOutPath == "${repo}/test/parity/top/../leaf";
+    # A copied path reaches its siblings from the original directory, and
+    # copies each one. The flake evaluator cannot reach them.
+    copiedReachesSiblings =
+      copied.nestedValue == "nested"
+      && builtins.substring 0 11 copied.leafOutPath == "/nix/store/"
+      && copied.inputs.mid.sourceInfo != copied.sourceInfo;
+  };
+
+  differing = builtins.filter (name: comparisons.${name} != [ ]) (builtins.attrNames comparisons);
+  broken = builtins.filter (name: !deviations.${name}) (builtins.attrNames deviations);
+in
+if differing != [ ] then
+  throw "FAILED: flake-compatish differs from the flake evaluator: ${
+    builtins.toJSON (builtins.intersectAttrs (builtins.listToAttrs (map (n: { name = n; value = null; }) differing)) comparisons)
+  }"
+else if broken != [ ] then
+  throw "FAILED: documented deviations changed: ${builtins.concatStringsSep ", " broken}"
+else
+  "All ${toString (builtins.length (builtins.attrNames comparisons))} parity comparisons and ${
+    toString (builtins.length (builtins.attrNames deviations))
+  } deviation checks passed!"
