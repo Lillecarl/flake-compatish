@@ -676,17 +676,38 @@ let
   quoteNames = names: builtins.concatStringsSep ", " (map (name: "`${name}`") names);
 
   /**
+    The root inputs that the lockfile has and `flake.nix` no longer
+    declares. The flake evaluator drops them, and so does `evaluateNode`.
+
+    Only the root: the lockfile can hold an input under a dependency that
+    the dependency's `flake.nix` does not declare, for example after an
+    override of a nested input.
+
+    # Type
+
+    ```
+    staleInputNames :: String -> AttrSet -> AttrSet -> [String]
+    ```
+  */
+  staleInputNames =
+    nodeName: node: flake:
+    let
+      declared = declaredInputNames flake;
+    in
+    if nodeName != lockFile.root then
+      [ ]
+    else
+      builtins.filter (name: !(builtins.elem name declared)) (builtins.attrNames (node.inputs or { }));
+
+  /**
     `value`, or an error when the lockfile cannot serve `flake`.
 
-    The flake evaluator locks a declared input that the lockfile lacks, and
-    drops a locked input that `flake.nix` no longer declares. flake-compatish
-    cannot lock, so both are an error that says to run `nix flake lock`.
-    Without this check, the error is a missing or unexpected argument of
+    The flake evaluator locks a declared input that the lockfile lacks.
+    flake-compatish cannot lock, so that is an error that says to run
+    `nix flake lock`. Without this check, the error is a missing argument of
     `outputs`, which does not name the lockfile.
 
-    Only the root gets the second test. The lockfile can hold an input under
-    a dependency that the dependency's `flake.nix` does not declare, for
-    example after an override of a nested input.
+    A stale input, which the flake evaluator drops, gets a warning.
 
     # Inputs
 
@@ -718,7 +739,7 @@ let
       declared = declaredInputNames flake;
       locked = builtins.attrNames (node.inputs or { });
       missing = builtins.filter (name: !(builtins.elem name locked)) declared;
-      stale = if isRootNode then builtins.filter (name: !(builtins.elem name declared)) locked else [ ];
+      stale = staleInputNames nodeName node flake;
       where = if isRootNode then lockFilePath else "node `${nodeName}` of ${lockFilePath}";
     in
     if missing != [ ] && !hasLockFile then
@@ -738,10 +759,10 @@ let
         )
       )
     else if stale != [ ] then
-      throw (
+      builtins.warn (
         "flake-compatish: ${lockFilePath} has inputs that ${flakeDir}/flake.nix does not declare: "
-        + "${quoteNames stale}. Run `nix flake lock`."
-      )
+        + "${quoteNames stale}. flake-compatish ignores them. Run `nix flake lock`."
+      ) (warnChangedUrls nodeName flakeDir flake value)
     else
       warnChangedUrls nodeName flakeDir flake value;
 
@@ -960,7 +981,7 @@ let
           rerootFor inputName target
         else
           evaluatedNodes.${target}
-      ) (node.inputs or { });
+      ) (removeAttrs (node.inputs or { }) (staleInputNames nodeName node flake));
 
       # Call flake.outputs with resolved inputs + self reference
       flakeOutputs = withContext "evaluating" (

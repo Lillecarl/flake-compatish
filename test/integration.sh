@@ -48,7 +48,6 @@ stale() {
   nix eval --impure --expr "(import ./. ./test/fixtures/stale/$1).outputs.${2:-testValue}"
 }
 expect_error 'flake.lock does not have: `another`, `extra`. Run `nix flake lock`.' stale missing
-expect_error 'does not declare: `simple`. Run `nix flake lock`.' stale removed
 expect_error 'and there is no flake.lock: `simple`.' stale lockless-inputs
 expect_error 'node `simple` of' nix eval --impure --expr \
   '(import ./. { source = ./test/fixtures/with-dep; overrides.simple = ./test/fixtures/stale/missing; }).outputs.simpleValue'
@@ -56,6 +55,10 @@ expect_error 'node `simple` of' nix eval --impure --expr \
 stale changed-url simpleValue >"$log" 2>&1
 grep -qF 'changes the url of `simple`' "$log"
 grep -qxF '"hello from simple"' "$log"
+# A removed input warns, and is not passed to `outputs`.
+stale removed >"$log" 2>&1
+grep -qF 'does not declare: `simple`. flake-compatish ignores them.' "$log"
+grep -qxF '"hello from stale/removed"' "$log"
 
 # An error in a nested input names the input path.
 nested() {
