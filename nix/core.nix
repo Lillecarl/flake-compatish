@@ -261,12 +261,16 @@ let
   disableOverridesEnv = builtins.getEnv "FLAKE_COMPATISH_DISABLE_OVERRIDES";
   overridesDisabled = disableOverridesEnv != "" && disableOverridesEnv != "0";
 
+  # Pure evaluation removes `currentSystem` from `builtins`. Not a `getEnv`
+  # test: an impure evaluation with an empty environment, such as `env -i`
+  # or a systemd unit, has no HOME or USER either.
+  isImpureEvaluation = builtins ? currentSystem;
+
   # This file belongs to the consumer and is normally gitignored.  By default
   # it is looked up relative to `source`, never relative to flake-compatish;
-  # callers can select a different file with `overridesFile`.  `getEnv` is
-  # empty in pure Nix evaluation, so the local file is never imported there
-  # even when a dirty flake source happened to copy it into the store.
-  isImpureEvaluation = builtins.getEnv "HOME" != "" || builtins.getEnv "USER" != "";
+  # callers can select a different file with `overridesFile`.  It is never
+  # imported in pure evaluation, even when a dirty flake source happened to
+  # copy it into the store.
   localOverrides =
     if !overridesDisabled && isImpureEvaluation && optionalOverridesFileExists overridesFile then
       import overridesFile

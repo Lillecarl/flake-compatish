@@ -28,6 +28,8 @@ HOME="$PWD/test/fixtures" \
 nix build --no-link --file ./doc site
 cp test/fixtures/with-dep/overrides.nix.in "$override_file"
 nix eval --impure --file ./test/local-overrides.nix
+# Impure with no HOME or USER: the local file must still apply.
+env -i PATH="$PATH" nix eval --impure --file ./test/local-overrides.nix
 FLAKE_COMPATISH_DISABLE_OVERRIDES=1 nix eval --impure --file ./test/disabled-overrides.nix -I "$system_overrides"
 nix eval --no-write-lock-file ./test#pureLocalOverride
 nix eval --no-write-lock-file ./test#pureSystemOverride

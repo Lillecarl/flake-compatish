@@ -171,10 +171,10 @@ overrides.nix
 flake-compatish looks for this file relative to `source`. `overridesFile`
 picks a different path.
 
-- flake-compatish reads the file only during impure evaluation. It tests this
-  with the `HOME` and `USER` environment variables, which pure evaluation does
-  not see. The flake evaluator therefore never applies it, even when a dirty
-  tree copied it into the store.
+- flake-compatish reads the file only during impure evaluation. It tests
+  whether `builtins.currentSystem` exists, which pure evaluation removes. The
+  flake evaluator therefore never applies it, even when a dirty tree copied
+  it into the store.
 - The same name rules apply as for `overrides`.
 - A local value wins over everything else. See [Precedence](#precedence).
 
