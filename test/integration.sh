@@ -16,12 +16,14 @@ nix eval --impure --file ./test/lib.nix
 nix eval --impure --file ./test/system-overrides.nix -I "$system_overrides"
 
 # HOME names the fixtures, so `~` does too. The XDG variables keep Nix's
-# own cache, state and config where they were.
+# own cache, state and config where they were. `real_home` is read first:
+# a prefix assignment's expansion already sees the new HOME.
+real_home="$HOME"
 HOME="$PWD/test/fixtures" \
-  XDG_CACHE_HOME="${XDG_CACHE_HOME:-$HOME/.cache}" \
-  XDG_STATE_HOME="${XDG_STATE_HOME:-$HOME/.local/state}" \
-  XDG_CONFIG_HOME="${XDG_CONFIG_HOME:-$HOME/.config}" \
-  XDG_DATA_HOME="${XDG_DATA_HOME:-$HOME/.local/share}" \
+  XDG_CACHE_HOME="${XDG_CACHE_HOME:-$real_home/.cache}" \
+  XDG_STATE_HOME="${XDG_STATE_HOME:-$real_home/.local/state}" \
+  XDG_CONFIG_HOME="${XDG_CONFIG_HOME:-$real_home/.config}" \
+  XDG_DATA_HOME="${XDG_DATA_HOME:-$real_home/.local/share}" \
   nix eval --impure --file ./test/realistic.nix \
   -I "flake-compatish-overrides=$PWD/test/fixtures/realistic-system-overrides.nix"
 
