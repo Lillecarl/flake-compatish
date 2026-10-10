@@ -48,5 +48,23 @@
         "pure system overrides ignored"
       else
         throw "system-wide override was unexpectedly applied during pure evaluation";
+
+    # Nix rejects `~` while parsing in pure mode, and `tryEval` cannot catch
+    # it, so this evaluates only if the local file is never read.
+    pureTildeFileNotRead =
+      let
+        result = import flake-compatish {
+          source = ./fixtures/with-dep;
+          overrides = {
+            self = ./fixtures/with-dep;
+            simple = ./fixtures/simple;
+          };
+          overridesFile = ./fixtures/tilde-overrides.nix;
+        };
+      in
+      if result.outputs.simpleValue == "hello from simple" then
+        "pure tilde file not read"
+      else
+        throw "the local file was applied during pure evaluation";
   };
 }
