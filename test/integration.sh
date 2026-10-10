@@ -2,7 +2,23 @@
 set -euo pipefail
 
 override_file=test/fixtures/with-dep/overrides.nix
-trap 'rm -f "$override_file"' EXIT
+log=$(mktemp)
+trap 'rm -f "$override_file" "$log"' EXIT
+
+# Run a command that must fail, and require `pattern` in what it prints.
+expect_error() {
+  local pattern=$1
+  shift
+  if "$@" >"$log" 2>&1; then
+    echo "expected an error: $*" >&2
+    exit 1
+  fi
+  if ! grep -qF -- "$pattern" "$log"; then
+    echo "expected '$pattern' from: $*" >&2
+    cat "$log" >&2
+    exit 1
+  fi
+}
 
 # Only nixpkgs, for doc/default.nix. A machine's own
 # flake-compatish-overrides entry would otherwise apply to every test. The
@@ -26,6 +42,19 @@ HOME="$PWD/test/fixtures" \
   XDG_DATA_HOME="${XDG_DATA_HOME:-$real_home/.local/share}" \
   nix eval --impure --file ./test/realistic.nix \
   -I "flake-compatish-overrides=$PWD/test/fixtures/realistic-system-overrides.nix"
+
+stale() {
+  nix eval --impure --expr "(import ./. ./test/fixtures/stale/$1).outputs.${2:-testValue}"
+}
+expect_error 'flake.lock does not have: `another`, `extra`. Run `nix flake lock`.' stale missing
+expect_error 'does not declare: `simple`. Run `nix flake lock`.' stale removed
+expect_error 'and there is no flake.lock: `simple`.' stale lockless-inputs
+expect_error 'node `simple` of' nix eval --impure --expr \
+  '(import ./. { source = ./test/fixtures/with-dep; overrides.simple = ./test/fixtures/stale/missing; }).outputs.simpleValue'
+# A changed url warns, and the locked reference still applies.
+stale changed-url simpleValue >"$log" 2>&1
+grep -qF 'changes the url of `simple`' "$log"
+grep -qxF '"hello from simple"' "$log"
 
 nix build --no-link --file ./doc site
 cp test/fixtures/with-dep/overrides.nix.in "$override_file"

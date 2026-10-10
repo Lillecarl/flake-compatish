@@ -371,6 +371,25 @@ This is not the same as a `reroot.nixpkgs` function. `reroot` replaces the
   input: `../sibling` still means the sibling the lockfile named, as with the
   flake evaluator.
 
+### A stale lockfile
+
+The flake evaluator locks a new input and drops a removed one by itself.
+flake-compatish cannot lock, so it stops with an error that says to run
+`nix flake lock`:
+
+- `flake.nix` declares an input that `flake.lock` does not have. An argument
+  of `outputs` counts as an input, as it does for the flake evaluator.
+- `flake.lock` has a root input that `flake.nix` does not declare.
+- `flake.nix` declares inputs, and there is no `flake.lock`.
+
+The first test also applies to each dependency. An override can supply a
+newer checkout of a dependency with an input that the lockfile does not
+know.
+
+When the `url` of a root input no longer gives the reference in
+`flake.lock`, flake-compatish prints a warning and uses the locked
+reference.
+
 ## Overridable results: `lib.nix`
 
 `default.nix` stays a plain flake-compat shim. `lib.nix` gives a result that

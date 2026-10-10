@@ -563,6 +563,140 @@ let
       followPath nextNodeName (builtins.tail path);
 
   ###########################################################################
+  # Lockfile freshness
+  ###########################################################################
+
+  /**
+    The input names a `flake.nix` declares: the keys of `inputs`, and the
+    arguments of `outputs` except `self`. The flake evaluator locks an
+    argument that `inputs` does not name as an indirect reference, so an
+    argument is an input too, even with a default.
+
+    # Type
+
+    ```
+    declaredInputNames :: AttrSet -> [String]
+    ```
+  */
+  declaredInputNames =
+    flake:
+    let
+      fromInputs = builtins.attrNames (flake.inputs or { });
+      fromArgs = builtins.attrNames (builtins.functionArgs flake.outputs);
+    in
+    builtins.filter (name: name != "self") (
+      fromInputs ++ builtins.filter (name: !(builtins.elem name fromInputs)) fromArgs
+    );
+
+  quoteNames = names: builtins.concatStringsSep ", " (map (name: "`${name}`") names);
+
+  /**
+    `value`, or an error when the lockfile cannot serve `flake`.
+
+    The flake evaluator locks a declared input that the lockfile lacks, and
+    drops a locked input that `flake.nix` no longer declares. flake-compatish
+    cannot lock, so both are an error that says to run `nix flake lock`.
+    Without this check, the error is a missing or unexpected argument of
+    `outputs`, which does not name the lockfile.
+
+    Only the root gets the second test. The lockfile can hold an input under
+    a dependency that the dependency's `flake.nix` does not declare, for
+    example after an override of a nested input.
+
+    # Inputs
+
+    `nodeName`
+    : The lockfile node of `flake`.
+
+    `node`
+    : That node.
+
+    `flakeDir`
+    : Where `flake` is, for the message.
+
+    `flake`
+    : The imported `flake.nix`.
+
+    `value`
+    : What to return when the lockfile is current.
+
+    # Type
+
+    ```
+    checkLockFresh :: String -> AttrSet -> String -> AttrSet -> a -> a
+    ```
+  */
+  checkLockFresh =
+    nodeName: node: flakeDir: flake: value:
+    let
+      isRootNode = nodeName == lockFile.root;
+      declared = declaredInputNames flake;
+      locked = builtins.attrNames (node.inputs or { });
+      missing = builtins.filter (name: !(builtins.elem name locked)) declared;
+      stale = if isRootNode then builtins.filter (name: !(builtins.elem name declared)) locked else [ ];
+      where = if isRootNode then lockFilePath else "node `${nodeName}` of ${lockFilePath}";
+    in
+    if missing != [ ] then
+      throw (
+        "flake-compatish: ${flakeDir}/flake.nix declares inputs that ${where} does not have: "
+        + "${quoteNames missing}. Run `nix flake lock`."
+        + (
+          if isRootNode then
+            ""
+          else
+            " An override can supply a newer flake than the lockfile knows; lock with that override."
+        )
+      )
+    else if stale != [ ] then
+      throw (
+        "flake-compatish: ${lockFilePath} has inputs that ${flakeDir}/flake.nix does not declare: "
+        + "${quoteNames stale}. Run `nix flake lock`."
+      )
+    else
+      warnChangedUrls nodeName flakeDir flake value;
+
+  /**
+    `value`, with a warning for each root input whose `url` no longer gives
+    the reference the lockfile recorded. The flake evaluator fetches the new
+    reference; flake-compatish uses the locked one.
+
+    Only the root, and only inputs with a `url`: an input of a dependency
+    can be overridden from the root's `flake.nix`, and an input without a
+    `url` gets a default reference that this does not compute.
+
+    # Type
+
+    ```
+    warnChangedUrls :: String -> String -> AttrSet -> a -> a
+    ```
+  */
+  warnChangedUrls =
+    nodeName: flakeDir: flake: value:
+    let
+      inputs = flake.inputs or { };
+      lockedInputs = lockFile.nodes.${lockFile.root}.inputs or { };
+      changed = builtins.filter (
+        name:
+        let
+          declared = inputs.${name};
+          spec = lockedInputs.${name} or null;
+        in
+        builtins.isAttrs declared
+        && declared ? url
+        && builtins.isString spec
+        && fcParseFlakeRef declared.url != (lockFile.nodes.${spec}.original or null)
+      ) (builtins.attrNames inputs);
+    in
+    if nodeName != lockFile.root || changed == [ ] then
+      value
+    else
+      builtins.warn (
+        "flake-compatish: ${flakeDir}/flake.nix changes the url of ${quoteNames changed}, "
+        + "and ${lockFilePath} still has the old reference. flake-compatish uses the locked one. "
+        + "Run `nix flake lock`."
+      ) value;
+
+  ###########################################################################
   # Node evaluation
   ###########################################################################
 
@@ -723,7 +857,9 @@ let
       ) (node.inputs or { });
 
       # Call flake.outputs with resolved inputs + self reference
-      flakeOutputs = flake.outputs (resolvedInputs // { self = flakeResult; });
+      flakeOutputs = checkLockFresh nodeName node flakePath flake (
+        flake.outputs (resolvedInputs // { self = flakeResult; })
+      );
 
       injectedLegacyPackages =
         if masterNixpkgsNode != null && nodeName != masterNixpkgsNode && flakeOutputs ? legacyPackages then
@@ -776,7 +912,15 @@ let
     let
       flake = import (flakeSrc + "/flake.nix");
       sourceInfo = mkSourceInfo flakeSrc;
-      flakeOutputs = flake.outputs { self = flakeResult; };
+      declared = declaredInputNames flake;
+      flakeOutputs =
+        if declared != [ ] then
+          throw (
+            "flake-compatish: ${toString flakeSrc}/flake.nix declares inputs, and there is no flake.lock: "
+            + "${quoteNames declared}. Run `nix flake lock`."
+          )
+        else
+          flake.outputs { self = flakeResult; };
       flakeResult = flakeOutputs // sourceInfo;
     in
     flakeResult;
