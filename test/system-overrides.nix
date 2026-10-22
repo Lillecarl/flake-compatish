@@ -81,8 +81,8 @@ let
       };
     in
     assert' "loses_to_local_file" (
-      result.outputs.simplePath == "${fixturesPath}/simple"
-    ) "Expected the local file to beat the system-wide override, got: ${result.outputs.simplePath}";
+      toString result.outputs.simplePath == "${fixturesPath}/simple"
+    ) "Expected the local file to beat the system-wide override, got: ${toString result.outputs.simplePath}";
 
   test_unusable_value_passes_on =
     let
@@ -92,8 +92,8 @@ let
         systemOverrides."path:../simple" = /nonexistent/flake-compatish;
       };
     in
-    assert' "unusable_value_passes_on" (result.outputs.simplePath == "${fixturesPath}/simple")
-      "Expected a missing system-wide path to fall through to overrides, got: ${result.outputs.simplePath}";
+    assert' "unusable_value_passes_on" (toString result.outputs.simplePath == "${fixturesPath}/simple")
+      "Expected a missing system-wide path to fall through to overrides, got: ${toString result.outputs.simplePath}";
 
   test_function_form =
     let

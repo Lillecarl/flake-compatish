@@ -8,7 +8,10 @@ let
     overrides.self = ./fixtures/with-dep;
   };
 in
-if result.outputs.simplePath == "${fixturesPath}/simple" then
+if
+  result.outputs.simpleValue == "hello from simple-local"
+  && toString result.outputs.simplePath == "${fixturesPath}/simple-local"
+then
   "impure local override applied"
 else
-  throw "expected the local override to use ${fixturesPath}/simple, got ${result.outputs.simplePath}"
+  throw "expected the local override to use ${fixturesPath}/simple-local, got ${toString result.outputs.simplePath}"

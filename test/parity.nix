@@ -100,13 +100,16 @@ let
         "outPath"
       ];
     # A path is used in place: no store copy, so no narHash, and no time.
+    # outPath is a path value, not a string, so a build that uses it gets a
+    # store copy.
     inPlaceSourceInfo = inPlace.sourceInfo == {
       lastModified = 0;
       lastModifiedDate = "19700101000000";
-      outPath = "${repo}/test/parity/top";
+      outPath = /. + "${repo}/test/parity/top";
     };
-    # Its relative inputs are in place too, under the checkout.
-    inPlaceRelative = inPlace.leafOutPath == "${repo}/test/parity/top/../leaf";
+    # Its relative inputs are in place too, as paths under the checkout.
+    inPlaceRelative =
+      builtins.isPath inPlace.leafOutPath && toString inPlace.leafOutPath == "${repo}/test/parity/leaf";
     # A copied path reaches its siblings from the original directory, and
     # copies each one. The flake evaluator cannot reach them.
     copiedReachesSiblings =

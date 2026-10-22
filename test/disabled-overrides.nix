@@ -16,7 +16,7 @@ let
       };
     in
     if !(isStorePath result.outputs.selfPath) then
-      throw "expected the supplied self override to be ignored, got ${result.outputs.selfPath}"
+      throw "expected the supplied self override to be ignored, got ${toString result.outputs.selfPath}"
     else if result.outputs.testValue != "hello from simple" then
       throw "expected the lockfile source to evaluate, got ${result.outputs.testValue}"
     else
@@ -30,7 +30,7 @@ let
       };
     in
     if !(isStorePath result.outputs.selfPath) then
-      throw "expected the local override file to be ignored, got ${result.outputs.selfPath}"
+      throw "expected the local override file to be ignored, got ${toString result.outputs.selfPath}"
     else
       true;
 

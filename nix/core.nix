@@ -172,6 +172,10 @@ let
   /**
     A sourceInfo for a path used in place, without a store copy.
 
+    `outPath` stays a path. `import` reads it where it is; a build that
+    interpolates it gets a store copy, as with any path. A string would reach
+    a builder as a directory outside its sandbox.
+
     # Type
 
     ```
@@ -181,7 +185,7 @@ let
   mkSourceInfo = path: {
     lastModified = 0;
     lastModifiedDate = "19700101000000";
-    outPath = toString path;
+    outPath = path;
   };
 
   /**
@@ -476,7 +480,7 @@ let
   warnAppliedOverride =
     name: origin: sourceInfo:
     if warnOverrides then
-      builtins.warn "flake-compatish: ${sourceString}: overriding ${name} to ${sourceInfo.outPath}${origin}" sourceInfo
+      builtins.warn "flake-compatish: ${sourceString}: overriding ${name} to ${toString sourceInfo.outPath}${origin}" sourceInfo
     else
       sourceInfo;
 
@@ -744,12 +748,12 @@ let
     in
     if missing != [ ] && !hasLockFile then
       throw (
-        "flake-compatish: ${flakeDir}/flake.nix declares inputs, and there is no flake.lock: "
+        "flake-compatish: ${toString flakeDir}/flake.nix declares inputs, and there is no flake.lock: "
         + "${quoteNames missing}. Run `nix flake lock`."
       )
     else if missing != [ ] then
       throw (
-        "flake-compatish: ${flakeDir}/flake.nix declares inputs that ${where} does not have: "
+        "flake-compatish: ${toString flakeDir}/flake.nix declares inputs that ${where} does not have: "
         + "${quoteNames missing}. Run `nix flake lock`."
         + (
           if isRootNode then
@@ -760,7 +764,7 @@ let
       )
     else if stale != [ ] then
       builtins.warn (
-        "flake-compatish: ${lockFilePath} has inputs that ${flakeDir}/flake.nix does not declare: "
+        "flake-compatish: ${lockFilePath} has inputs that ${toString flakeDir}/flake.nix does not declare: "
         + "${quoteNames stale}. flake-compatish ignores them. Run `nix flake lock`."
       ) (warnChangedUrls nodeName flakeDir flake value)
     else
@@ -802,7 +806,7 @@ let
       value
     else
       builtins.warn (
-        "flake-compatish: ${flakeDir}/flake.nix changes the url of ${quoteNames changed}, "
+        "flake-compatish: ${toString flakeDir}/flake.nix changes the url of ${quoteNames changed}, "
         + "and ${lockFilePath} still has the old reference. flake-compatish uses the locked one. "
         + "Run `nix flake lock`."
       ) value;

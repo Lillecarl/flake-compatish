@@ -28,41 +28,42 @@ let
   # `overrides` merges key by key, so the earlier `self` survives.
   test_override_merges =
     let
-      result = withDep.override { overrides.simple = ./fixtures/simple; };
+      result = withDep.override { overrides.simple = ./fixtures/simple-local; };
     in
     assert' "override_merges"
-      (result.outputs.simplePath == "${fixturesPath}/simple" && !(isStorePath result.outputs.selfPath))
-      "Expected both overrides to apply, got simple=${result.outputs.simplePath} self=${result.outputs.selfPath}";
+      (result.outputs.simpleValue == "hello from simple-local" && !(isStorePath result.outputs.selfPath))
+      "Expected both overrides to apply, got simple=${toString result.outputs.simplePath} self=${toString result.outputs.selfPath}";
 
   test_override_chains =
     let
-      result = (withDep.override { overrides.simple = ./fixtures/simple; }).override {
+      result = (withDep.override { overrides.simple = ./fixtures/simple-local; }).override {
         warnOverrides = false;
       };
     in
     assert' "override_chains" (
-      result.outputs.simplePath == "${fixturesPath}/simple" && result.args.warnOverrides == false
+      result.outputs.simpleValue == "hello from simple-local" && result.args.warnOverrides == false
     ) "Expected a second override to keep the first";
 
   test_override_function_removes =
     let
-      result = (withDep.override { overrides.simple = ./fixtures/simple; }).override (prev: {
+      result = (withDep.override { overrides.simple = ./fixtures/simple-local; }).override (prev: {
         overrides = removeAttrs prev.overrides [ "simple" ];
       });
     in
     assert' "override_function_removes" (
-      result.outputs.simplePath == "${fixturesPath}/with-dep/../simple"
+      result.outputs.simpleValue == "hello from simple"
+      && toString result.outputs.simplePath == "${fixturesPath}/simple"
     )
-      "Expected simple to come from the lockfile again, got: ${result.outputs.simplePath}";
+      "Expected simple to come from the lockfile again, got: ${toString result.outputs.simplePath}";
 
   test_sources =
     let
-      result = withDep.override { overrides.simple = ./fixtures/simple; };
+      result = withDep.override { overrides.simple = ./fixtures/simple-local; };
     in
     assert' "sources" (
-      result.sources.simple.outPath == "${fixturesPath}/simple"
-      && result.sources.nixpkgs.outPath == "${fixturesPath}/with-dep/../fake-nixpkgs"
-    ) "Expected sources to show the override and the lockfile, got: ${result.sources.simple.outPath}";
+      toString result.sources.simple.outPath == "${fixturesPath}/simple-local"
+      && toString result.sources.nixpkgs.outPath == "${fixturesPath}/fake-nixpkgs"
+    ) "Expected sources to show the override and the lockfile, got: ${toString result.sources.simple.outPath}";
 
   test_strict_rejects_override_typo = assert' "strict_rejects_override_typo" (fails
     (withDep.override {
@@ -136,15 +137,18 @@ let
   # levels down.
   test_compose =
     let
-      simple = (fc.new { source = ./fixtures/simple; }).override { overrides.self = ./fixtures/simple; };
+      simple = (fc.new { source = ./fixtures/simple-local; }).override {
+        overrides.self = ./fixtures/simple-local;
+      };
       result = fc.new {
         source = ./fixtures/deep;
         reroot.simple = _: simple.outputs;
       };
     in
     assert' "compose" (
-      result.outputs.nestedSimplePath == "${fixturesPath}/simple"
-    ) "Expected the overridden simple two levels down, got: ${result.outputs.nestedSimplePath}";
+      result.outputs.nestedSimpleValue == "hello from simple-local"
+      && toString result.outputs.nestedSimplePath == "${fixturesPath}/simple-local"
+    ) "Expected the overridden simple two levels down, got: ${toString result.outputs.nestedSimplePath}";
 
   fromDefault = import ../. {
     source = ./fixtures/with-dep;
@@ -153,11 +157,11 @@ let
 
   test_default_compatish_overrides =
     let
-      result = fromDefault.compatish.override { overrides.simple = ./fixtures/simple; };
+      result = fromDefault.compatish.override { overrides.simple = ./fixtures/simple-local; };
     in
     assert' "default_compatish_overrides"
-      (result.outputs.simplePath == "${fixturesPath}/simple" && !(isStorePath result.outputs.selfPath))
-      "Expected compatish.override to keep the default.nix arguments, got: ${result.outputs.simplePath}";
+      (result.outputs.simpleValue == "hello from simple-local" && !(isStorePath result.outputs.selfPath))
+      "Expected compatish.override to keep the default.nix arguments, got: ${toString result.outputs.simplePath}";
 
   # default.nix stays lenient, and strictness only bites through compatish.
   test_default_compatish_strict_only_there =

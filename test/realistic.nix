@@ -46,8 +46,8 @@ let
     in
     assert' "tilde_in_local_file" (
       result.outputs.simpleValue == "hello from lockless"
-      && result.outputs.simplePath == "${home}/lockless"
-    ) "Expected ~/lockless to resolve under HOME, got: ${result.outputs.simplePath}";
+      && toString result.outputs.simplePath == "${home}/lockless"
+    ) "Expected ~/lockless to resolve under HOME, got: ${toString result.outputs.simplePath}";
 
   # The form a committed file should use: pure evaluation reads `~` as a
   # parse error, and this as a missing path, which falls back to the lockfile.

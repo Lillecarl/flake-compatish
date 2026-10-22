@@ -121,8 +121,11 @@ import flake-compatish {
 }
 ```
 
-- **A path** is used in place. Nix does not copy it to the store, so an edit
-  shows up on the next evaluation.
+- **A path** is used in place. Evaluation reads it where it is, so an edit
+  shows up on the next evaluation. `outPath` stays a path value. A build that
+  uses it gets a store copy, as with any path. Use path arithmetic for a
+  subdirectory: `input.outPath + "/sub"` copies only `sub`, and only when a
+  build needs it. `"${input}/sub"` copies the whole checkout.
 - **A string** is a flake reference. flake-compatish parses it and fetches it.
 - **`self`** names the root flake.
 - **Other names** must be inputs of the root flake. flake-compatish ignores any
@@ -381,7 +384,8 @@ change to one fails the tests.
 - **A path used in place.** The path form, or `overrides.self`, evaluates
   the directory itself. `sourceInfo` is only `outPath`, `lastModified = 0`
   and its date, because nothing is hashed or copied. That is the purpose of
-  the form.
+  the form. `outPath` is a path value, not a store path string. Relative
+  inputs under it are paths too, and Nix normalizes their `..` parts.
 - **A copied path with siblings.** `source = ./.` copies the directory
   alone. The flake evaluator then cannot reach `path:../sibling`.
   flake-compatish starts from the original directory, and copies each

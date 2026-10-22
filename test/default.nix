@@ -24,7 +24,7 @@ let
       result = flake-compatish { source = ./fixtures/simple; };
     in
     assert' "default_copies_to_store" (isStorePath result.outputs.selfPath)
-      "Expected selfPath to be in /nix/store, got: ${result.outputs.selfPath}";
+      "Expected selfPath to be in /nix/store, got: ${toString result.outputs.selfPath}";
 
   # Test 2: overrides.self - source should NOT be copied to store
   test_override_self_no_store =
@@ -36,7 +36,7 @@ let
     in
     assert' "override_self_no_store" (
       !(isStorePath result.outputs.selfPath)
-    ) "Expected selfPath to NOT be in /nix/store, got: ${result.outputs.selfPath}";
+    ) "Expected selfPath to NOT be in /nix/store, got: ${toString result.outputs.selfPath}";
 
   # Test 3: Outputs are correctly resolved
   test_outputs_resolved =
@@ -50,21 +50,25 @@ let
       result.outputs.testValue == "hello from simple"
     ) "Expected testValue to be 'hello from simple', got: ${result.outputs.testValue}";
 
-  # Test 4: Input override works
+  # Test 4: Input override works. simple-local differs from the lockfile's
+  # simple by value, so the value proves which one arrived.
   test_input_override =
     let
-      overridePath = "${fixturesPath}/simple";
+      overridePath = "${fixturesPath}/simple-local";
       result = flake-compatish {
         source = ./fixtures/with-dep;
         overrides = {
           self = ./fixtures/with-dep;
-          simple = ./fixtures/simple;
+          simple = ./fixtures/simple-local;
         };
       };
     in
     assert' "input_override" (
-      result.outputs.simplePath == overridePath
-    ) "Expected simplePath to be '${overridePath}', got: ${result.outputs.simplePath}";
+      result.outputs.simpleValue == "hello from simple-local"
+      && toString result.outputs.simplePath == overridePath
+      # A path, so a build that interpolates it gets a store copy.
+      && builtins.isPath result.outputs.simplePath
+    ) "Expected simplePath to be '${overridePath}', got: ${toString result.outputs.simplePath}";
 
   # Test 5: Dependency values are accessible
   test_dependency_values =
@@ -73,13 +77,13 @@ let
         source = ./fixtures/with-dep;
         overrides = {
           self = ./fixtures/with-dep;
-          simple = ./fixtures/simple;
+          simple = ./fixtures/simple-local;
         };
       };
     in
     assert' "dependency_values" (
-      result.outputs.simpleValue == "hello from simple"
-    ) "Expected simpleValue to be 'hello from simple', got: ${result.outputs.simpleValue}";
+      result.outputs.simpleValue == "hello from simple-local"
+    ) "Expected simpleValue to be 'hello from simple-local', got: ${result.outputs.simpleValue}";
 
   # Test 6: Lockless flake works with override
   test_lockless_with_override =
@@ -99,7 +103,7 @@ let
       result = flake-compatish { source = ./fixtures/lockless; };
     in
     assert' "lockless_default" (isStorePath result.outputs.selfPath)
-      "Expected selfPath to be in /nix/store for lockless default, got: ${result.outputs.selfPath}";
+      "Expected selfPath to be in /nix/store for lockless default, got: ${toString result.outputs.selfPath}";
 
   # Test 8: inputs attrset contains self
   test_inputs_has_self =
@@ -136,7 +140,7 @@ let
       };
     in
     assert' "string_override_fetches" (isStorePath result.outputs.simplePath)
-      "Expected simplePath to be in /nix/store when using string flake ref, got: ${result.outputs.simplePath}";
+      "Expected simplePath to be in /nix/store when using string flake ref, got: ${toString result.outputs.simplePath}";
 
   # Test 11: String override still resolves values correctly
   test_string_override_values =
@@ -164,7 +168,7 @@ let
       };
     in
     assert' "nonexistent_self_override_fallback" (isStorePath result.outputs.selfPath)
-      "Expected selfPath to be in /nix/store after fallback, got: ${result.outputs.selfPath}";
+      "Expected selfPath to be in /nix/store after fallback, got: ${toString result.outputs.selfPath}";
 
   # Test 13: A consumer without overrides.nix proceeds normally.
   test_no_local_override_file =
@@ -206,7 +210,7 @@ let
       };
     in
     assert' "configured_overrides_file" (
-      result.outputs.simplePath == "${fixturesPath}/simple"
+      toString result.outputs.simplePath == "${fixturesPath}/simple"
     ) "Expected the configured local override file to take precedence";
 
   # Test 16: Override warnings can be disabled without changing resolution.
@@ -269,22 +273,23 @@ let
         source = ./fixtures/deep;
         overrides = {
           self = ./fixtures/deep;
-          simple = ./fixtures/simple;
+          simple = ./fixtures/simple-local;
         };
       };
     in
     assert' "override_misses_nested" (
-      result.outputs.nestedSimplePath == "${fixturesPath}/deep/../with-dep/../simple"
+      result.outputs.nestedSimpleValue == "hello from simple"
+      && toString result.outputs.nestedSimplePath == "${fixturesPath}/simple"
     )
-      "Expected the nested simple to come from the lockfile, got: ${result.outputs.nestedSimplePath}";
+      "Expected the nested simple to come from the lockfile, got: ${toString result.outputs.nestedSimplePath}";
 
   # Test 20: reroot reaches it, because the key is the input name that
   # with-dep uses and not the node the lockfile named.
   test_reroot_reaches_nested =
     let
       simple = (flake-compatish {
-        source = ./fixtures/simple;
-        overrides.self = ./fixtures/simple;
+        source = ./fixtures/simple-local;
+        overrides.self = ./fixtures/simple-local;
       }).outputs;
       result = flake-compatish {
         source = ./fixtures/deep;
@@ -293,8 +298,9 @@ let
       };
     in
     assert' "reroot_reaches_nested" (
-      result.outputs.nestedSimplePath == fixturesPath + "/simple"
-    ) "Expected the nested simple to be the local one, got: ${result.outputs.nestedSimplePath}";
+      result.outputs.nestedSimpleValue == "hello from simple-local"
+      && toString result.outputs.nestedSimplePath == fixturesPath + "/simple-local"
+    ) "Expected the nested simple to be the local one, got: ${toString result.outputs.nestedSimplePath}";
 
   # Test 21: reroot replaces the flake and not only its source, so a value
   # the rerooted flake computes is the one that arrives.
