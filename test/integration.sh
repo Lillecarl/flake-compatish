@@ -32,6 +32,7 @@ nix eval --impure --file ./test/lib.nix
 nix eval --impure --file ./test/system-overrides.nix -I "$system_overrides"
 nix eval --impure --file ./test/parity.nix
 ./test/pure-parity.sh
+./test/no-copy.sh
 
 # HOME names the fixtures, so `~` does too. The XDG variables keep Nix's
 # own cache, state and config where they were. `real_home` is read first:
