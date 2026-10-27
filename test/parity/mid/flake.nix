@@ -25,5 +25,11 @@
       nestedOutPath = nested.outPath;
       dataText = builtins.readFile "${data}/data.txt";
       dataOutPath = data.outPath;
+      dataInfo = removeAttrs data [ "outPath" ];
+      selfSourceInfo = removeAttrs self.sourceInfo [ "outPath" ];
+      leafSourceInfo = removeAttrs leaf.sourceInfo [ "outPath" ];
+      nestedSourceInfo = removeAttrs nested.sourceInfo [ "outPath" ];
+      # Every other output, for one `nix eval --json` in test/pure-parity.sh.
+      all = removeAttrs self.outputs [ "all" ];
     };
 }
