@@ -6,17 +6,19 @@
 
   `args`
   : A path, or an attrset. A path `p` is short for
-    `{ source = p; overrides.self = p; }`, which evaluates `p` in place with
-    no store copy.
+    `{ source = p; overrides.self = p; }`.
 
     `source`
-    : The flake to evaluate: a path, or a flake reference string.
+    : The flake to evaluate. A local tree is read in place with no store
+      copy: a path, a string that starts with `/`, or an attrset with such an
+      `outPath`, whose `sourceInfo` it keeps. Pure evaluation reads only a
+      tree in the store. Any other string is a flake reference.
 
     `overrides` (default `{ }`)
-    : Input name to a path, used in place, or a flake reference string,
+    : Input name to a local tree, used in place, or a flake reference string,
       fetched. `self` names the root. A name that is not `self` or a root
-      input is ignored and not evaluated. A path that does not exist falls
-      back to the lockfile.
+      input is ignored and not evaluated. A local tree that does not exist
+      falls back to the lockfile.
 
     `overridesFile` (default `source + "/overrides.nix"`)
     : An optional machine-local file of the same shape. It is read only in

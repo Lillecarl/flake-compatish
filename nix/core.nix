@@ -26,7 +26,8 @@ let
       };
 
   srcArg = normalizedArgs.source;
-  sourceRef = if builtins.isString srcArg then fcParseFlakeRef srcArg else null;
+  srcLocal = localTree srcArg;
+  sourceRef = if srcLocal == null then fcParseFlakeRef srcArg else null;
 
   # A flake reference is fetched once, and its sourceInfo is the root's, as
   # with the flake evaluator. fetchTree does not take `dir`; the flake is in
@@ -40,15 +41,29 @@ let
       fcFetchTree (
         (if sourceRef.type == "git" then { shallow = false; } else { }) // removeAttrs sourceRef [ "dir" ]
       );
-  sourceDir = if sourceRef == null then "" else sourceRef.dir or "";
+  sourceDir =
+    if sourceRef != null then
+      sourceRef.dir or ""
+    else if rootInPlace then
+      srcLocal.subdir
+    else
+      "";
 
   source =
     if sourceTree != null then
       (if sourceDir == "" then sourceTree.outPath else "${sourceTree.outPath}/${sourceDir}")
-    else if builtins.pathExists srcArg then
-      srcArg
+    else if builtins.pathExists srcLocal.dir then
+      srcLocal.dir
     else
       throw "source must be a path that exists or a flakeRef";
+
+  # A local source is read where it is, overrides or not: in impure
+  # evaluation always, in pure evaluation when it is in the store, which a
+  # pure evaluation can read at all. A store copy at evaluation takes every
+  # file, ignored ones too, and can be gigabytes; a build that needs the tree
+  # copies it then. In place, a source in the store has the `outPath` the
+  # flake evaluator gives it.
+  rootInPlace = srcLocal != null && (isImpureEvaluation || isInStore (toString srcLocal.dir));
 
   suppliedOverrides = normalizedArgs.overrides or { };
 
@@ -172,26 +187,121 @@ let
   /**
     A sourceInfo for a path used in place, without a store copy.
 
-    `outPath` stays a path. `import` reads it where it is; a build that
-    interpolates it gets a store copy, as with any path. A string would reach
-    a builder as a directory outside its sandbox.
-
     # Type
 
     ```
-    mkSourceInfo :: Path -> AttrSet
+    mkSourceInfo :: (Path | String) -> AttrSet
     ```
   */
   mkSourceInfo = path: {
     lastModified = 0;
     lastModifiedDate = "19700101000000";
-    outPath = path;
+    outPath = inPlace path;
   };
+
+  /**
+    A directory as an `outPath` that copies nothing at evaluation.
+
+    Outside the store it is a path value. `import` reads it where it is; a
+    build that interpolates it gets a store copy, as with any path. A string
+    would reach a builder as a directory outside its sandbox.
+
+    A string in the store that has context keeps it, so a build uses it as
+    it is. Context is not made up for one that has none: a flake's source in
+    pure evaluation is a store path that is not in the store yet (Nix 2.35),
+    and `appendContext` then names a path nothing can build.
+    `builtins.storePath` checks validity, but fails pure evaluation and a
+    virtual path with an error `tryEval` cannot catch. Such a path stays a
+    path value. A build copies it again under a new name:
+    `"${/nix/store/x-foo}"` is `/nix/store/<hash>-x-foo`.
+
+    # Type
+
+    ```
+    inPlace :: (Path | String) -> (Path | String)
+    ```
+  */
+  inPlace =
+    dir:
+    let
+      dirString = toString dir;
+      plain = builtins.unsafeDiscardStringContext dirString;
+    in
+    if builtins.isString dir && builtins.hasContext dir && isInStore plain then
+      dir
+    else if builtins.isPath dir then
+      dir
+    else
+      /. + plain;
+
+  overrideSubdirAttr = "__flakeCompatishSubdir";
+
+  storePrefix = builtins.storeDir + "/";
+
+  isInStore =
+    pathString: builtins.substring 0 (builtins.stringLength storePrefix) pathString == storePrefix;
+
+  /**
+    A local tree named by `value`, or `null` when `value` names none.
+
+    These name a local tree: a path, a string that starts with `/`, and an
+    attrset with such an `outPath`, for example a flake or a `fetchTree`
+    result. Any other string is a flake reference. A flake brings its
+    `sourceInfo` along, and a `fetchTree` result is one, so the tree keeps its
+    hash, revision and time.
+
+    The result has `dir`, the directory in place, `sourceInfo`, and `subdir`,
+    the part of `dir` below `sourceInfo.outPath`.
+
+    # Type
+
+    ```
+    localTree :: Any -> AttrSet | Null
+    ```
+  */
+  localTree =
+    value:
+    let
+      outPath = if builtins.isAttrs value then value.outPath or null else value;
+      isLocal =
+        builtins.isPath outPath || builtins.isString outPath && builtins.substring 0 1 outPath == "/";
+      dir = inPlace outPath;
+      dirString = builtins.unsafeDiscardStringContext (toString dir);
+      given =
+        if !builtins.isAttrs value then
+          null
+        else if value ? sourceInfo then
+          value.sourceInfo
+        else if value ? narHash then
+          value
+        else
+          null;
+      givenRoot = builtins.unsafeDiscardStringContext (toString given.outPath);
+      givenFits =
+        given != null
+        && (
+          givenRoot == dirString
+          || builtins.substring 0 (builtins.stringLength givenRoot + 1) dirString == givenRoot + "/"
+        );
+    in
+    if !isLocal then
+      null
+    else
+      {
+        inherit dir;
+        sourceInfo = if givenFits then given else mkSourceInfo dir;
+        subdir =
+          if givenFits && givenRoot != dirString then
+            builtins.substring (builtins.stringLength givenRoot + 1) (-1) dirString
+          else
+            "";
+      };
 
   /**
     The sourceInfo for one override value, or `null` when it cannot be used.
 
-    A path that exists is used in place. A string is a flake reference and is
+    A local tree (see `localTree`) that exists is used in place, and one that
+    does not exist gives `null`. Any other string is a flake reference and is
     fetched. Anything else, and a value that fails to evaluate, gives `null`.
 
     `tryEval` does not make a missing file safe to import, so callers must
@@ -209,24 +319,31 @@ let
     # Type
 
     ```
-    resolveOverride :: String -> (Path | String) -> AttrSet | Null
+    resolveOverride :: String -> Any -> AttrSet | Null
     ```
   */
   resolveOverride =
     name: override:
     let
       forcedOverride = builtins.tryEval override;
-      pathIsUsable =
-        if forcedOverride.success then
-          builtins.tryEval (builtins.isPath forcedOverride.value && builtins.pathExists forcedOverride.value)
+      local = if forcedOverride.success then builtins.tryEval (localTree forcedOverride.value) else forcedOverride;
+      localExists =
+        if local.success && local.value != null then
+          builtins.tryEval (builtins.pathExists local.value.dir)
         else
           {
             success = false;
             value = false;
           };
     in
-    if pathIsUsable.success && pathIsUsable.value then
-      mkSourceInfo forcedOverride.value
+    if localExists.success && localExists.value then
+      local.value.sourceInfo
+      # An evaluated flake in a subdirectory names that directory, so the
+      # lockfile's `dir` does not apply under it. `nodeLocations` takes the
+      # attribute back out.
+      // (if local.value.subdir == "" then { } else { ${overrideSubdirAttr} = local.value.subdir; })
+    else if local.success && local.value != null then
+      null
     else if forcedOverride.success && builtins.isString forcedOverride.value then
       fcFetchTree (fcParseFlakeRef forcedOverride.value)
     else
@@ -270,10 +387,13 @@ let
       };
 
   # The root's source when there is no `self` override. A path is copied to
-  # the store here.
+  # the store here only in pure evaluation, and only from outside the store,
+  # which pure evaluation refuses.
   rootSourceInfo =
     if sourceTree != null then
       sourceTree
+    else if rootInPlace then
+      srcLocal.sourceInfo
     else
       fcFetchTree {
         type = "path";
@@ -480,7 +600,9 @@ let
   warnAppliedOverride =
     name: origin: sourceInfo:
     if warnOverrides then
-      builtins.warn "flake-compatish: ${sourceString}: overriding ${name} to ${toString sourceInfo.outPath}${origin}" sourceInfo
+      builtins.warn "flake-compatish: ${sourceString}: overriding ${name} to ${toString sourceInfo.outPath}${
+        if sourceInfo ? ${overrideSubdirAttr} then "/" + sourceInfo.${overrideSubdirAttr} else ""
+      }${origin}" sourceInfo
     else
       sourceInfo;
 
@@ -867,14 +989,19 @@ let
     let
       isRootNode = nodeName == lockFile.root;
       # Inside the context: a string override is fetched while it resolves.
-      override = withNodeContext "fetching" nodeName (
+      resolvedOverride = withNodeContext "fetching" nodeName (
         if isRootNode then resolveNamedOverride "self" else resolveNodeOverride nodeName node
       );
+      override =
+        if resolvedOverride == null then null else removeAttrs resolvedOverride [ overrideSubdirAttr ];
+      overrideSubdir = if resolvedOverride == null then null else resolvedOverride.${overrideSubdirAttr} or null;
       isRelative = !isRootNode && override == null && isRelativePath node.locked;
       parent = nodeLocations.${followPath lockFile.root (node.parent or [ ])};
       inParentTree = isRelative && !parent.isolated;
       subdir =
-        if !isRootNode then
+        if overrideSubdir != null then
+          overrideSubdir
+        else if !isRootNode then
           node.locked.dir or ""
         else if override == null then
           sourceDir
@@ -900,7 +1027,9 @@ let
       );
 
       outPath = if inParentTree then relativeDir else withSubdir sourceInfo.outPath;
-      copiedPath = override == null && (if isRootNode then sourceTree == null else node.locked.type or "" == "path");
+      copiedPath =
+        override == null
+        && (if isRootNode then sourceTree == null && !rootInPlace else node.locked.type or "" == "path");
     in
     {
       inherit sourceInfo outPath;

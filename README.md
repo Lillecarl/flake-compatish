@@ -56,23 +56,52 @@ nix build --file . impure.packages.default   # current system selected for you
 
 ## Two ways to call it
 
-`default.nix` takes a path or an attrset. The two forms differ in one thing:
-the store copy.
+`default.nix` takes a path or an attrset. The path form is short for
+`{ source = ./.; overrides.self = ./.; }`. Use the attrset form when you need
+any other argument.
 
-| call | `self` comes from | store copy |
-| --- | --- | --- |
-| `import flake-compatish ./.` | the directory itself | no |
-| `import flake-compatish { source = ./.; }` | a store copy of `source` | yes, as the flake evaluator does |
+### A local source is read in place
 
-The path form is short for `{ source = ./.; overrides.self = ./.; }`. Use the
-attrset form when you need any other argument, and add `overrides.self = ./.;`
-yourself if you still want to skip the copy.
+A *local tree* is a path, a string that starts with `/`, or an attrset with
+such an `outPath`: an evaluated flake, a `fetchTree` result, or
+`{ outPath; sourceInfo; }`. Any other string is a flake reference.
+
+A local `source` is read where it is, in both forms. Nothing is copied to the
+store at evaluation; a build that uses `self` copies it then. A copy at
+evaluation would take every file, ignored ones too.
+
+- **Impure evaluation** reads any local tree in place.
+- **Pure evaluation** can read only the store. A tree in the store, such as a
+  directory of the flake that calls flake-compatish, is read in place. A tree
+  outside it is an error.
+- **A string with store context** keeps that context, so a build uses that
+  store path and does not copy it again. A path value in the store stays a
+  path value. flake-compatish does not add context to it: in pure
+  evaluation, a flake's source is a store path that is not in the store yet.
+- **`sourceInfo`** comes from the attrset when it has one. Otherwise it is
+  only `outPath`, `lastModified = 0` and its date.
+
+From inside another flake, this gives exactly what the flake evaluator
+gives, `sourceInfo` included:
+
+```nix
+{
+  outputs = { self }: {
+    sub = (import flake-compatish {
+      source = {
+        outPath = self.sourceInfo.outPath + "/sub";
+        inherit (self) sourceInfo;
+      };
+    }).outputs;
+  };
+}
+```
 
 ## Arguments
 
 | argument | default | effect |
 | --- | --- | --- |
-| `source` | required | The flake to evaluate. A path, or a flake reference string such as `"github:owner/repo"`. |
+| `source` | required | The flake to evaluate. A local tree (see [above](#a-local-source-is-read-in-place)), or a flake reference string such as `"github:owner/repo"`. |
 | `overrides` | `{ }` | Replace the source of an input. See [Override an input's source](#override-an-inputs-source). |
 | `overridesFile` | `source + "/overrides.nix"` | The optional machine-local override file. See [Local overrides](#local-overrides). |
 | `systemOverrides` | `true` | The machine's overrides for every repository. See [System-wide overrides](#system-wide-overrides). |
@@ -121,17 +150,23 @@ import flake-compatish {
 }
 ```
 
-- **A path** is used in place. Evaluation reads it where it is, so an edit
-  shows up on the next evaluation. `outPath` stays a path value. A build that
-  uses it gets a store copy, as with any path. Use path arithmetic for a
-  subdirectory: `input.outPath + "/sub"` copies only `sub`, and only when a
-  build needs it. `"${input}/sub"` copies the whole checkout.
-- **A string** is a flake reference. flake-compatish parses it and fetches it.
+- **A local tree** is used in place: a path, a string that starts with `/`,
+  a store path such as `pkgs.path` or `inputs.nixpkgs.outPath`, or an
+  evaluated flake. Evaluation reads it where it is, so an edit shows up on
+  the next evaluation. The rules for `source` apply: a string with store
+  context keeps it, and a flake brings its `sourceInfo`. A path value
+  outside the store gets a store copy when a build uses it. Use path
+  arithmetic for a subdirectory: `input.outPath + "/sub"` copies only
+  `sub`, and only when a build needs it. `"${input}/sub"` copies the whole
+  checkout.
+- **Any other string** is a flake reference. flake-compatish parses it and
+  fetches it.
 - **`self`** names the root flake.
 - **Other names** must be inputs of the root flake. flake-compatish ignores any
   other name and does not evaluate its value, so a typo goes unnoticed. Use
   `lib.nix` if you want an error instead.
-- **A path that does not exist** falls back to the lockfile, with no warning.
+- **A local tree that does not exist** falls back to the lockfile, with no
+  warning.
   So one `default.nix` can name a checkout that only some machines have.
 
 An override replaces the lockfile node with that name. Every flake in the
@@ -217,8 +252,9 @@ flake-compatish-overrides=…` sets it for one command.
   parts.
 - **It reaches every depth.** Matching runs on each lockfile node, so it also
   reaches `nixpkgs_2` and the copies that `overrides` cannot.
-- **Values** are the same as for `overrides`: a path used in place, or a flake
-  reference string. A path that does not exist passes to the next source.
+- **Values** are the same as for `overrides`: a local tree used in place, or a
+  flake reference string. A local tree that does not exist passes to the next
+  source.
 - **Impure evaluation only.** Pure evaluation has an empty NIX_PATH, so the
   flake evaluator never applies it.
 - **Strict names never apply.** Most keys name a dependency that a given
@@ -279,9 +315,10 @@ FLAKE_COMPATISH_DISABLE_OVERRIDES=1 nix build --file . impure.packages.hello
 
 flake-compatish then ignores `overrides`, the local file, the system-wide
 overrides, `self` and `reroot`,
-and evaluates from the lockfile alone. The source is copied to the store, as
-the flake evaluator does. Use it to check whether a local checkout causes a
-result, with no edit to any file. `nixpkgsArgs` still applies.
+and evaluates from the lockfile alone. The root still stays in place: in
+impure evaluation it is never copied, override or not. Use it to check whether
+a local checkout causes a result, with no edit to any file. `nixpkgsArgs`
+still applies.
 
 ## Replace a flake: `reroot`
 
@@ -377,19 +414,22 @@ This is not the same as a `reroot.nixpkgs` function. `reroot` replaces the
 
 With a flake reference as `source`, flake-compatish gives what
 `builtins.getFlake` gives: the same attributes, `sourceInfo`, `outPath` and
-outputs, at every depth. `test/parity.nix` compares the two on fixtures
-that `nix flake lock` locked, and on `<nixpkgs>`, which has no `flake.lock`. It also asserts each difference below, so a
-change to one fails the tests.
+outputs, at every depth. So does a local tree that carries its `sourceInfo`,
+in pure evaluation: see [A local source is read in place](#a-local-source-is-read-in-place).
 
-- **A path used in place.** The path form, or `overrides.self`, evaluates
-  the directory itself. `sourceInfo` is only `outPath`, `lastModified = 0`
-  and its date, because nothing is hashed or copied. That is the purpose of
-  the form. `outPath` is a path value, not a store path string. Relative
-  inputs under it are paths too, and Nix normalizes their `..` parts.
-- **A copied path with siblings.** `source = ./.` copies the directory
-  alone. The flake evaluator then cannot reach `path:../sibling`.
-  flake-compatish starts from the original directory, and copies each
-  sibling by itself, with its own `sourceInfo`.
+Two tests compare them, on fixtures that `nix flake lock` locked.
+`test/parity.nix` runs impure, on flake references and on `<nixpkgs>`, which
+has no `flake.lock`. `test/pure-parity.sh` evaluates each fixture with the
+flake evaluator, and again from `test/pure-parity`, a flake with no inputs
+that imports it with flake-compatish. Both assert the differences below, so
+a change to one fails the tests.
+
+- **A local tree without `sourceInfo`.** A path or a string gives
+  `sourceInfo` with only `outPath`, `lastModified = 0` and its date, because
+  nothing is hashed. Its outputs are the flake evaluator's.
+- **A path value normalizes `..`.** Relative inputs under a path value are
+  path values too, and Nix normalizes their `..` parts. The flake evaluator,
+  and a string source, keep them: `top/../leaf`.
 - **A stale lockfile** that lacks an input is an error, not a new lock.
   See below.
 - **Overrides, `reroot` and `nixpkgsArgs`** change the result on purpose.
@@ -544,3 +584,6 @@ source.
 ```bash
 ./test/integration.sh
 ```
+
+It also runs `test/no-copy.sh`, which evaluates against an empty chroot
+store and fails if anything was copied to it.

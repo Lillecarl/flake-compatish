@@ -18,13 +18,13 @@ let
   # Test cases
   #
 
-  # Test 1: Default behavior - source should be copied to store
-  test_default_copies_to_store =
+  # Test 1: Impure evaluation reads a path source in place, with no override
+  test_default_in_place =
     let
       result = flake-compatish { source = ./fixtures/simple; };
     in
-    assert' "default_copies_to_store" (isStorePath result.outputs.selfPath)
-      "Expected selfPath to be in /nix/store, got: ${toString result.outputs.selfPath}";
+    assert' "default_in_place" (result.outputs.selfPath == ./fixtures/simple)
+      "Expected selfPath to be the source itself, got: ${toString result.outputs.selfPath}";
 
   # Test 2: overrides.self - source should NOT be copied to store
   test_override_self_no_store =
@@ -97,13 +97,13 @@ let
       result.outputs.testValue == "hello from lockless"
     ) "Expected testValue to be 'hello from lockless', got: ${result.outputs.testValue}";
 
-  # Test 7: Lockless flake works with default (store copy)
+  # Test 7: Lockless flake works with default (in place)
   test_lockless_default =
     let
       result = flake-compatish { source = ./fixtures/lockless; };
     in
-    assert' "lockless_default" (isStorePath result.outputs.selfPath)
-      "Expected selfPath to be in /nix/store for lockless default, got: ${toString result.outputs.selfPath}";
+    assert' "lockless_default" (result.outputs.selfPath == ./fixtures/lockless)
+      "Expected selfPath to be the source itself for lockless default, got: ${toString result.outputs.selfPath}";
 
   # Test 8: inputs attrset contains self
   test_inputs_has_self =
@@ -156,19 +156,116 @@ let
     assert' "string_override_values" (result.outputs.simpleValue == "hello from simple")
       "Expected simpleValue to be 'hello from simple' with string override, got: ${result.outputs.simpleValue}";
 
-  # Test 12: Nonexistent path override for self falls back to fetchTree (with warning)
+  # Test 12: Nonexistent path override for self falls back to the source
   test_nonexistent_self_override_fallback =
     let
       result = flake-compatish {
         source = ./fixtures/simple;
         overrides = {
-          # This path doesn't exist - should warn and fall back to fetchTree
           self = /nonexistent/path/that/does/not/exist;
         };
       };
     in
-    assert' "nonexistent_self_override_fallback" (isStorePath result.outputs.selfPath)
-      "Expected selfPath to be in /nix/store after fallback, got: ${toString result.outputs.selfPath}";
+    assert' "nonexistent_self_override_fallback" (result.outputs.selfPath == ./fixtures/simple)
+      "Expected selfPath to be the source after fallback, got: ${toString result.outputs.selfPath}";
+
+  # Test 12b: A store path string keeps its context, so a build does not
+  # copy it again.
+  test_store_source_keeps_context =
+    let
+      stored = builtins.path {
+        path = ./fixtures/simple;
+        name = "simple";
+      };
+      result = flake-compatish { source = stored; };
+    in
+    assert' "store_source_keeps_context" (
+      result.outputs.selfPath == stored
+      && builtins.getContext result.outputs.selfPath == builtins.getContext stored
+    ) "Expected selfPath to be ${stored} with context, got: ${toString result.outputs.selfPath}";
+
+  storedSimpleLocal = builtins.path {
+    path = ./fixtures/simple-local;
+    name = "simple-local";
+  };
+
+  # Test 12c: An override can be a store path string, a store path value or
+  # an evaluated flake. Each is used in place: no fetch, no second copy.
+  test_store_overrides_in_place =
+    let
+      withSimple =
+        simple:
+        (flake-compatish {
+          source = ./fixtures/with-dep;
+          overrides.simple = simple;
+        }).outputs;
+      fromString = withSimple storedSimpleLocal;
+      fromPath = withSimple (/. + builtins.unsafeDiscardStringContext storedSimpleLocal);
+      flake = (flake-compatish storedSimpleLocal).outputs;
+      fromFlake = withSimple flake;
+    in
+    assert' "store_overrides_in_place" (
+      fromString.simpleValue == "hello from simple-local"
+      && fromString.simplePath == storedSimpleLocal
+      && builtins.getContext fromString.simplePath == builtins.getContext storedSimpleLocal
+      && builtins.isPath fromPath.simplePath
+      && toString fromPath.simplePath == storedSimpleLocal
+      && fromFlake.simpleValue == "hello from simple-local"
+      && fromFlake.simplePath == storedSimpleLocal
+    ) "Expected each store override at ${storedSimpleLocal}, got: ${toString fromString.simplePath}, ${toString fromPath.simplePath}, ${toString fromFlake.simplePath}";
+
+  # Test 12d: A source can be an evaluated flake, or an attrset with
+  # `outPath` and `sourceInfo`, which then keeps that sourceInfo.
+  test_attrset_source =
+    let
+      flake = (flake-compatish storedSimpleLocal).outputs;
+      fromFlake = (flake-compatish { source = flake; }).outputs;
+      tree = builtins.fetchTree {
+        type = "path";
+        path = toString ./fixtures;
+      };
+      withInfo =
+        (flake-compatish {
+          source = {
+            outPath = tree.outPath + "/simple-local";
+            sourceInfo = tree;
+          };
+        }).outputs;
+    in
+    assert' "attrset_source" (
+      fromFlake.testValue == "hello from simple-local"
+      && fromFlake.outPath == storedSimpleLocal
+      && withInfo.testValue == "hello from simple-local"
+      && withInfo.sourceInfo.narHash == tree.narHash
+      && withInfo.outPath == tree.outPath + "/simple-local"
+    ) "Expected the attrset sources to evaluate in place, got: ${toString fromFlake.outPath}, ${toString withInfo.outPath}";
+
+  # Test 12e: An evaluated flake in a subdirectory, as an override, names that
+  # directory and keeps its tree's sourceInfo.
+  test_subdir_flake_override =
+    let
+      tree = builtins.fetchTree {
+        type = "path";
+        path = toString ./fixtures;
+      };
+      sub =
+        (flake-compatish {
+          source = {
+            outPath = tree.outPath + "/simple-local";
+            sourceInfo = tree;
+          };
+        }).outputs;
+      result =
+        (flake-compatish {
+          source = ./fixtures/with-dep;
+          overrides.simple = sub;
+        }).outputs;
+    in
+    assert' "subdir_flake_override" (
+      result.simpleValue == "hello from simple-local"
+      && result.simplePath == tree.outPath + "/simple-local"
+      && result.inputs.simple.sourceInfo == tree
+    ) "Expected simple at ${tree.outPath}/simple-local, got: ${toString result.simplePath}";
 
   # Test 13: A consumer without overrides.nix proceeds normally.
   test_no_local_override_file =
@@ -323,7 +420,7 @@ let
     test_override_misses_nested
     test_reroot_reaches_nested
     test_reroot_replaces_outputs
-    test_default_copies_to_store
+    test_default_in_place
     test_override_self_no_store
     test_outputs_resolved
     test_input_override
@@ -335,6 +432,10 @@ let
     test_string_override_fetches
     test_string_override_values
     test_nonexistent_self_override_fallback
+    test_store_source_keeps_context
+    test_store_overrides_in_place
+    test_attrset_source
+    test_subdir_flake_override
     test_no_local_override_file
     test_unknown_override_is_lazy
     test_configured_overrides_file

@@ -85,7 +85,7 @@ let
   };
 
   inPlace = (flake-compatish (/. + "${repo}/test/parity/top")).outputs;
-  copied = (flake-compatish { source = /. + "${repo}/test/parity/top"; }).outputs;
+  attrsetForm = (flake-compatish { source = /. + "${repo}/test/parity/top"; }).outputs;
 
   nixpkgsInPlace = (flake-compatish (/. + nixpkgs)).outputs;
 
@@ -110,12 +110,12 @@ let
     # Its relative inputs are in place too, as paths under the checkout.
     inPlaceRelative =
       builtins.isPath inPlace.leafOutPath && toString inPlace.leafOutPath == "${repo}/test/parity/leaf";
-    # A copied path reaches its siblings from the original directory, and
-    # copies each one. The flake evaluator cannot reach them.
-    copiedReachesSiblings =
-      copied.nestedValue == "nested"
-      && builtins.substring 0 11 copied.leafOutPath == "/nix/store/"
-      && copied.inputs.mid.sourceInfo != copied.sourceInfo;
+    # Impure evaluation copies no path source, so the attrset form is in
+    # place too.
+    attrsetFormInPlace =
+      attrsetForm.sourceInfo == inPlace.sourceInfo
+      && attrsetForm.nestedValue == "nested"
+      && attrsetForm.leafOutPath == inPlace.leafOutPath;
   };
 
   differing = builtins.filter (name: comparisons.${name} != [ ]) (builtins.attrNames comparisons);
