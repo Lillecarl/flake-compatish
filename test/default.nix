@@ -169,6 +169,18 @@ let
     assert' "nonexistent_self_override_fallback" (result.outputs.selfPath == ./fixtures/simple)
       "Expected selfPath to be the source after fallback, got: ${toString result.outputs.selfPath}";
 
+  # Test 12a: A lookup path that NIX_PATH does not name falls back to the
+  # lockfile, so `overrides.nixpkgs = <nixpkgs>` is safe on every machine
+  test_missing_lookup_override_fallback =
+    let
+      result = flake-compatish {
+        source = ./fixtures/with-dep;
+        overrides.simple = <flake-compatish-test-not-in-nix-path>;
+      };
+    in
+    assert' "missing_lookup_override_fallback" (result.outputs.simpleValue == "hello from simple")
+      "Expected simpleValue from the lockfile, got: ${result.outputs.simpleValue}";
+
   # Test 12b: A store path string keeps its context, so a build does not
   # copy it again.
   test_store_source_keeps_context =
@@ -432,6 +444,7 @@ let
     test_string_override_fetches
     test_string_override_values
     test_nonexistent_self_override_fallback
+    test_missing_lookup_override_fallback
     test_store_source_keeps_context
     test_store_overrides_in_place
     test_attrset_source

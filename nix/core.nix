@@ -651,7 +651,11 @@ let
       resolve =
         candidate:
         let
-          sourceInfo = if candidate.value == null then null else resolveOverride name candidate.value;
+          # Under tryEval: comparing with null forces the value, and
+          # `<nixpkgs>` without a NIX_PATH entry throws here otherwise
+          forced = builtins.tryEval candidate.value;
+          sourceInfo =
+            if !forced.success || forced.value == null then null else resolveOverride name forced.value;
         in
         if sourceInfo == null then
           null
